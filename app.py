@@ -1,6 +1,7 @@
 import os
+import re
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
@@ -18,6 +19,29 @@ def index():
 def download_page(slug=None):
     return send_from_directory('.', 'download.html')
 
+@app.get('/downloads/<slug>/BouwFlow-Setup.ps1')
+def windows_installer(slug):
+    company = request.args.get('bedrijf', slug.replace('-', ' ').title()).strip()
+    app_url = request.args.get('app', request.host_url.rstrip('/')).strip()
+    safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '', slug) or 'demo'
+    safe_company = company.replace('`', '').replace('"', '').replace("'", '')[:100]
+    safe_url = app_url.replace('`', '').replace('"', '').replace("'", '')[:500]
+
+    template_path = os.path.join(app.root_path, 'windows-client', 'install.ps1')
+    with open(template_path, 'r', encoding='utf-8') as f:
+        script = f.read()
+
+    header = f'$Company = "{safe_company}"\n$Slug = "{safe_slug}"\n$AppUrl = "{safe_url}"\n'
+    # Remove the parameter block so customer values are fixed into this installer.
+    script = re.sub(r'^param\([\s\S]*?\)\s*', '', script, count=1)
+    script = header + script
+
+    return Response(
+        script,
+        mimetype='application/octet-stream',
+        headers={'Content-Disposition': 'attachment; filename="BouwFlow-Setup.ps1"'}
+    )
+
 @app.post('/api/demo')
 def demo():
     data = request.get_json(silent=True) or {}
@@ -27,21 +51,13 @@ def demo():
     telefoon = str(data.get('telefoon', '')).strip()
     soort = str(data.get('soort', '')).strip()
     bericht = str(data.get('bericht', '')).strip()
-
     if not naam or not bedrijf or not email or not bericht:
         return jsonify(ok=False, message='Vul alle verplichte velden in.'), 400
     if not BREVO_API_KEY:
         return jsonify(ok=False, message='E-mailservice is nog niet ingesteld.'), 500
-
     subject = f'Nieuwe gratis demo-aanvraag - {bedrijf}'
     text = f'''Nieuwe BouwFlow demo-aanvraag\n\nNaam: {naam}\nBedrijf: {bedrijf}\nE-mail: {email}\nTelefoon: {telefoon or '-'}\nInteresse: {soort or '-'}\n\nHoe het nu werkt / wat ze willen verbeteren:\n{bericht}\n'''
-    payload = {
-        'sender': {'name': BREVO_FROM_NAME, 'email': BREVO_FROM_EMAIL},
-        'to': [{'email': DEMO_TO_EMAIL, 'name': 'BouwFlow'}],
-        'replyTo': {'email': email, 'name': naam},
-        'subject': subject,
-        'textContent': text,
-    }
+    payload = {'sender': {'name': BREVO_FROM_NAME, 'email': BREVO_FROM_EMAIL},'to': [{'email': DEMO_TO_EMAIL, 'name': 'BouwFlow'}],'replyTo': {'email': email, 'name': naam},'subject': subject,'textContent': text}
     try:
         response = requests.post('https://api.brevo.com/v3/smtp/email', headers={'api-key': BREVO_API_KEY,'accept':'application/json','content-type':'application/json'}, json=payload, timeout=20)
     except requests.RequestException:
