@@ -1,1 +1,17 @@
-const form=document.getElementById('contactForm');form?.addEventListener('submit',e=>{e.preventDefault();const naam=document.getElementById('naam').value.trim();const bedrijf=document.getElementById('bedrijf').value.trim();const email=document.getElementById('email').value.trim();const bericht=document.getElementById('bericht').value.trim();const subject=encodeURIComponent(`Interesse in bedrijfsapp - ${bedrijf||naam}`);const body=encodeURIComponent(`Hallo,\n\nMijn naam is ${naam}${bedrijf?` van ${bedrijf}`:''}.\nMijn e-mailadres is ${email}.\n\nIk wil graag het volgende digitaliseren:\n\n${bericht}\n\nMet vriendelijke groet,\n${naam}`);window.location.href=`mailto:fokkerrik@gmail.com?subject=${subject}&body=${body}`;});
+const form=document.getElementById('demoForm');
+
+form?.addEventListener('submit',e=>{
+  e.preventDefault();
+
+  const naam=document.getElementById('naam').value.trim();
+  const bedrijf=document.getElementById('bedrijf').value.trim();
+  const email=document.getElementById('email').value.trim();
+  const telefoon=document.getElementById('telefoon').value.trim();
+  const soort=document.getElementById('soort').value;
+  const bericht=document.getElementById('bericht').value.trim();
+
+  const subject=encodeURIComponent(`Gratis demo BouwFlow - ${bedrijf}`);
+  const body=encodeURIComponent(`Hallo,\n\nIk wil graag een gratis BouwFlow-demo aanvragen.\n\nNaam: ${naam}\nBedrijf: ${bedrijf}\nE-mail: ${email}\nTelefoon: ${telefoon||'-'}\nInteresse: ${soort}\n\nHoe het nu werkt / wat ik wil verbeteren:\n${bericht}\n\nMet vriendelijke groet,\n${naam}`);
+
+  window.location.href=`mailto:fokkerrik@gmail.com?subject=${subject}&body=${body}`;
+});
