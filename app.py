@@ -1,7 +1,7 @@
 import os
 import re
 import requests
-from flask import Flask, jsonify, request, send_from_directory, Response
+from flask import Flask, jsonify, request, send_from_directory, redirect
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
@@ -19,45 +19,43 @@ def index():
 def download_page(slug=None):
     return send_from_directory('.', 'download.html')
 
+@app.get('/install/<slug>')
+def install_page(slug):
+    return send_from_directory('.', 'install.html')
+
+@app.get('/manifest/<slug>.webmanifest')
+def manifest(slug):
+    safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '', slug) or 'demo'
+    company = request.args.get('bedrijf', safe_slug.replace('-', ' ').title()).strip()[:100]
+    app_url = request.args.get('app', request.host_url.rstrip('/')).strip()[:500]
+    return jsonify({
+        'id': f'/app/{safe_slug}',
+        'name': f'BouwFlow - {company}',
+        'short_name': 'BouwFlow',
+        'description': f'BouwFlow bedrijfsapp voor {company}',
+        'start_url': f'/app/{safe_slug}?bedrijf={company}&app={app_url}',
+        'scope': '/',
+        'display': 'standalone',
+        'background_color': '#071c38',
+        'theme_color': '#071c38',
+        'icons': [
+            {'src':'/bouwflow-icon.svg','sizes':'any','type':'image/svg+xml','purpose':'any maskable'}
+        ]
+    })
+
+@app.get('/app/<slug>')
+def customer_app(slug):
+    target = request.args.get('app', '').strip()
+    if target and target.startswith(('https://','http://')) and not target.rstrip('/').endswith(request.host):
+        return redirect(target)
+    return redirect('/')
+
 @app.get('/api/client-config/<slug>')
 def client_config(slug):
     safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '', slug) or 'demo'
     company = request.args.get('bedrijf', safe_slug.replace('-', ' ').title()).strip()[:100]
     app_url = request.args.get('app', request.host_url.rstrip('/')).strip()[:500]
-    return jsonify({
-        'slug': safe_slug,
-        'company': company,
-        'app_url': app_url,
-        'version': 1
-    })
-
-@app.get('/downloads/<slug>/BouwFlow-Setup.exe')
-def windows_exe(slug):
-    safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '', slug) or 'demo'
-    exe_path = os.path.join(app.root_path, 'downloads', 'BouwFlow-Setup.exe')
-    if not os.path.exists(exe_path):
-        return 'Windows installer is nog niet beschikbaar.', 404
-    return send_from_directory(
-        os.path.join(app.root_path, 'downloads'),
-        'BouwFlow-Setup.exe',
-        as_attachment=True,
-        download_name=f'BouwFlow-{safe_slug}-Setup.exe',
-        mimetype='application/vnd.microsoft.portable-executable'
-    )
-
-@app.get('/downloads/<slug>/BouwFlow-Setup.ps1')
-def windows_installer(slug):
-    company = request.args.get('bedrijf', slug.replace('-', ' ').title()).strip()
-    app_url = request.args.get('app', request.host_url.rstrip('/')).strip()
-    safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '', slug) or 'demo'
-    safe_company = company.replace('`', '').replace('"', '').replace("'", '')[:100]
-    safe_url = app_url.replace('`', '').replace('"', '').replace("'", '')[:500]
-    template_path = os.path.join(app.root_path, 'windows-client', 'install.ps1')
-    with open(template_path, 'r', encoding='utf-8') as f:
-        script = f.read()
-    header = f'$Company = "{safe_company}"\n$Slug = "{safe_slug}"\n$AppUrl = "{safe_url}"\n'
-    script = re.sub(r'^param\([\s\S]*?\)\s*', '', script, count=1)
-    return Response(header + script, mimetype='application/octet-stream', headers={'Content-Disposition':'attachment; filename="BouwFlow-Setup.ps1"'})
+    return jsonify({'slug':safe_slug,'company':company,'app_url':app_url,'version':2})
 
 @app.post('/api/demo')
 def demo():
