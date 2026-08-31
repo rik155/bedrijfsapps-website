@@ -31,6 +31,20 @@ def client_config(slug):
         'version': 1
     })
 
+@app.get('/downloads/<slug>/BouwFlow-Setup.exe')
+def windows_exe(slug):
+    safe_slug = re.sub(r'[^a-zA-Z0-9_-]', '', slug) or 'demo'
+    exe_path = os.path.join(app.root_path, 'downloads', 'BouwFlow-Setup.exe')
+    if not os.path.exists(exe_path):
+        return 'Windows installer is nog niet beschikbaar.', 404
+    return send_from_directory(
+        os.path.join(app.root_path, 'downloads'),
+        'BouwFlow-Setup.exe',
+        as_attachment=True,
+        download_name=f'BouwFlow-{safe_slug}-Setup.exe',
+        mimetype='application/vnd.microsoft.portable-executable'
+    )
+
 @app.get('/downloads/<slug>/BouwFlow-Setup.ps1')
 def windows_installer(slug):
     company = request.args.get('bedrijf', slug.replace('-', ' ').title()).strip()
