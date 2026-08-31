@@ -13,10 +13,14 @@ BREVO_FROM_NAME = os.getenv('BREVO_FROM_NAME', 'BouwFlow').strip()
 def index():
     return send_from_directory('.', 'index.html')
 
+@app.get('/download')
+@app.get('/download/<slug>')
+def download_page(slug=None):
+    return send_from_directory('.', 'download.html')
+
 @app.post('/api/demo')
 def demo():
     data = request.get_json(silent=True) or {}
-
     naam = str(data.get('naam', '')).strip()
     bedrijf = str(data.get('bedrijf', '')).strip()
     email = str(data.get('email', '')).strip()
@@ -26,23 +30,11 @@ def demo():
 
     if not naam or not bedrijf or not email or not bericht:
         return jsonify(ok=False, message='Vul alle verplichte velden in.'), 400
-
     if not BREVO_API_KEY:
         return jsonify(ok=False, message='E-mailservice is nog niet ingesteld.'), 500
 
     subject = f'Nieuwe gratis demo-aanvraag - {bedrijf}'
-    text = f'''Nieuwe BouwFlow demo-aanvraag
-
-Naam: {naam}
-Bedrijf: {bedrijf}
-E-mail: {email}
-Telefoon: {telefoon or '-'}
-Interesse: {soort or '-'}
-
-Hoe het nu werkt / wat ze willen verbeteren:
-{bericht}
-'''
-
+    text = f'''Nieuwe BouwFlow demo-aanvraag\n\nNaam: {naam}\nBedrijf: {bedrijf}\nE-mail: {email}\nTelefoon: {telefoon or '-'}\nInteresse: {soort or '-'}\n\nHoe het nu werkt / wat ze willen verbeteren:\n{bericht}\n'''
     payload = {
         'sender': {'name': BREVO_FROM_NAME, 'email': BREVO_FROM_EMAIL},
         'to': [{'email': DEMO_TO_EMAIL, 'name': 'BouwFlow'}],
@@ -50,24 +42,12 @@ Hoe het nu werkt / wat ze willen verbeteren:
         'subject': subject,
         'textContent': text,
     }
-
     try:
-        response = requests.post(
-            'https://api.brevo.com/v3/smtp/email',
-            headers={
-                'api-key': BREVO_API_KEY,
-                'accept': 'application/json',
-                'content-type': 'application/json',
-            },
-            json=payload,
-            timeout=20,
-        )
+        response = requests.post('https://api.brevo.com/v3/smtp/email', headers={'api-key': BREVO_API_KEY,'accept':'application/json','content-type':'application/json'}, json=payload, timeout=20)
     except requests.RequestException:
         return jsonify(ok=False, message='Versturen lukt nu niet. Probeer het later opnieuw.'), 502
-
     if response.status_code >= 300:
         return jsonify(ok=False, message='Versturen lukt nu niet. Probeer het later opnieuw.'), 502
-
     return jsonify(ok=True, message='Bedankt! Je demo-aanvraag is verstuurd.')
 
 @app.get('/health')
