@@ -1,17 +1,48 @@
-const form=document.getElementById('demoForm');
+const form = document.getElementById('demoForm');
 
-form?.addEventListener('submit',e=>{
+form?.addEventListener('submit', async (e) => {
   e.preventDefault();
 
-  const naam=document.getElementById('naam').value.trim();
-  const bedrijf=document.getElementById('bedrijf').value.trim();
-  const email=document.getElementById('email').value.trim();
-  const telefoon=document.getElementById('telefoon').value.trim();
-  const soort=document.getElementById('soort').value;
-  const bericht=document.getElementById('bericht').value.trim();
+  const button = form.querySelector('button[type="submit"]');
+  const help = form.querySelector('.form-help');
+  const originalText = button.textContent;
 
-  const subject=encodeURIComponent(`Gratis demo BouwFlow - ${bedrijf}`);
-  const body=encodeURIComponent(`Hallo,\n\nIk wil graag een gratis BouwFlow-demo aanvragen.\n\nNaam: ${naam}\nBedrijf: ${bedrijf}\nE-mail: ${email}\nTelefoon: ${telefoon||'-'}\nInteresse: ${soort}\n\nHoe het nu werkt / wat ik wil verbeteren:\n${bericht}\n\nMet vriendelijke groet,\n${naam}`);
+  const payload = {
+    naam: document.getElementById('naam').value.trim(),
+    bedrijf: document.getElementById('bedrijf').value.trim(),
+    email: document.getElementById('email').value.trim(),
+    telefoon: document.getElementById('telefoon').value.trim(),
+    soort: document.getElementById('soort').value,
+    bericht: document.getElementById('bericht').value.trim()
+  };
 
-  window.location.href=`mailto:fokkerrik@gmail.com?subject=${subject}&body=${body}`;
+  button.disabled = true;
+  button.textContent = 'Aanvraag versturen...';
+  help.textContent = '';
+
+  try {
+    const response = await fetch('/api/demo', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || 'Versturen mislukt.');
+
+    form.reset();
+    button.textContent = 'Aanvraag verstuurd ✓';
+    help.textContent = 'Bedankt! Ik neem zo snel mogelijk contact met je op.';
+    help.style.color = '#16845c';
+
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 4000);
+  } catch (error) {
+    help.textContent = error.message || 'Er ging iets mis. Mail anders naar fokkerrik@gmail.com.';
+    help.style.color = '#c43d4d';
+    button.textContent = originalText;
+    button.disabled = false;
+  }
 });
