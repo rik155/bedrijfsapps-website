@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#06172d">
+  <title>BouwFlow | Jouw app staat klaar</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:linear-gradient(145deg,#06172d,#0b315f);color:#10253e;min-height:100vh;display:grid;place-items:center;padding:28px}.card{width:min(760px,100%);background:#fff;border-radius:22px;box-shadow:0 30px 80px #0006;overflow:hidden}.top{background:#071c38;color:#fff;padding:28px 34px;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:10px;font-size:24px;font-weight:900}.brand span span{color:#1681ff}.logo{width:42px;height:42px;display:grid;place-items:center;background:linear-gradient(145deg,#1d8dff,#0b3eaf);clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%);font-weight:900}.top small{color:#9fb3ca}.content{padding:42px 34px 36px}.eyebrow{color:#1681ff;font-size:11px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase}.content h1{font-size:36px;line-height:1.1;margin:8px 0 8px}.lead{font-size:17px;color:#697b8d;margin:0 0 28px}.downloads{display:grid;gap:13px}.download{display:flex;align-items:center;justify-content:space-between;border:1px solid #dfe7ef;border-radius:14px;padding:18px 20px;background:#fbfcfe;transition:.2s}.download:hover{transform:translateY(-1px);border-color:#1681ff;box-shadow:0 9px 25px #1681ff14}.download .left{display:flex;align-items:center;gap:15px}.icon{width:45px;height:45px;display:grid;place-items:center;border-radius:11px;background:#eaf4ff;color:#1681ff;font-size:21px;font-weight:900}.download b{display:block;font-size:15px}.download small{display:block;color:#7d8c9b;margin-top:2px}.download .action{background:#1681ff;color:#fff;padding:10px 14px;border-radius:8px;font-size:12px;font-weight:800}.download.disabled{opacity:.62}.download.disabled .action{background:#9aacbd}.ios-note{margin-top:24px;padding:18px;border-radius:13px;background:#f2f6fb;color:#5d7187;font-size:12px}.ios-note b{color:#193653}.footer{padding:18px 34px;border-top:1px solid #edf1f5;color:#8291a0;font-size:11px;display:flex;justify-content:space-between}.footer a{color:#1681ff;text-decoration:none}@media(max-width:600px){.top{padding:22px}.top small{display:none}.content{padding:30px 20px}.content h1{font-size:29px}.download{align-items:flex-start;gap:12px}.download .action{white-space:nowrap}.footer{padding:16px 20px;display:block}.footer span{display:block;margin-bottom:6px}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="top">
+      <div class="brand"><div class="logo">B</div><span>Bouw<span>Flow</span></span></div>
+      <small>Jouw bedrijfsapp</small>
+    </div>
+    <div class="content">
+      <div class="eyebrow">JOUW APP STAAT KLAAR</div>
+      <h1 id="companyTitle">BouwFlow voor jouw bedrijf</h1>
+      <p class="lead">Kies hieronder het apparaat waarop je BouwFlow wilt gebruiken.</p>
+
+      <div class="downloads">
+        <a class="download" id="windowsLink" href="#">
+          <div class="left"><div class="icon">▣</div><div><b>Download voor Windows</b><small>Voor laptop en desktop</small></div></div>
+          <span class="action">Download →</span>
+        </a>
+        <a class="download" id="androidLink" href="#">
+          <div class="left"><div class="icon">A</div><div><b>Download voor Android</b><small>Voor Android telefoon en tablet</small></div></div>
+          <span class="action">Download →</span>
+        </a>
+        <a class="download" id="iosLink" href="#">
+          <div class="left"><div class="icon">●</div><div><b>Gebruik op iPhone / iPad</b><small>Open de online versie en voeg hem toe aan je beginscherm</small></div></div>
+          <span class="action">Open →</span>
+        </a>
+      </div>
+
+      <div class="ios-note"><b>Geen technisch gedoe.</b> De Windows- en Android-knoppen kunnen straks direct het installatiebestand downloaden. Op iPhone/iPad opent BouwFlow online; Apple vereist daar een andere installatiemethode.</div>
+    </div>
+    <div class="footer"><span>Hulp nodig? BouwFlow helpt je op afstand.</span><a href="mailto:fokkerrik@gmail.com">fokkerrik@gmail.com</a></div>
+  </div>
+
+<script>
+const params=new URLSearchParams(location.search);
+const company=params.get('bedrijf')||'jouw bedrijf';
+const slug=params.get('slug')||'demo';
+document.getElementById('companyTitle').textContent=`BouwFlow voor ${company}`;
+document.getElementById('windowsLink').href=`/downloads/${encodeURIComponent(slug)}/BouwFlow-Setup.exe`;
+document.getElementById('androidLink').href=`/downloads/${encodeURIComponent(slug)}/BouwFlow.apk`;
+document.getElementById('iosLink').href=params.get('app')||'/';
+</script>
+</body>
+</html>
