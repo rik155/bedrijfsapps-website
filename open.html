@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Jan Bos Apps</title>
+  <style>
+    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#f2f5f7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}.app-view{height:100%;display:grid;grid-template-rows:auto 1fr}.view-bar{min-height:64px;padding:max(8px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) 8px max(12px,env(safe-area-inset-left));display:grid;grid-template-columns:44px 1fr 44px;align-items:center;background:#fff;border-bottom:1px solid #e2e8ec;box-shadow:0 3px 12px rgba(23,63,95,.06);z-index:2}.back{width:42px;height:42px;border:0;border-radius:13px;background:#edf3f6;color:#173f5f;font-size:25px;font-weight:800;display:grid;place-items:center;text-decoration:none}.view-title{text-align:center;min-width:0}.view-title strong{display:block;color:#173f5f;font-size:16px}.view-title small{display:block;color:#78858f;font-size:11px;margin-top:2px}.mark{width:38px;height:38px;border-radius:12px;background:#168542;color:#fff;display:grid;place-items:center;font-weight:900;font-size:13px}iframe{display:block;width:100%;height:100%;border:0;background:#fff}.error{display:grid;place-items:center;text-align:center;padding:24px;color:#173f5f}.error a{color:#168542;font-weight:800}
+  </style>
+</head>
+<body>
+  <div class="app-view">
+    <header class="view-bar">
+      <a class="back" href="/" aria-label="Terug naar alle apps">‹</a>
+      <div class="view-title"><strong id="title">App openen</strong><small>Jan Bos bedrijfsapps</small></div>
+      <div class="mark">JB</div>
+    </header>
+    <iframe id="frame" title="Jan Bos app" referrerpolicy="same-origin"></iframe>
+  </div>
+  <script>
+    const apps={
+      uren:{title:'Urenregistratie',url:'https://uren.93-119-6-183.sslip.io'},
+      meerwerk:{title:'Meerwerk',url:'https://meerwerk.93-119-6-183.sslip.io'},
+      regielijst:{title:'Regielijst',url:'https://regielijst.93-119-6-183.sslip.io'},
+      glaszetter:{title:'Glaszetter',url:'https://glaszetter.93-119-6-183.sslip.io'},
+      voorraad:{title:'Voorraad',url:'https://93-119-6-183.sslip.io'},
+      kantoor:{title:'Kantooroverzicht',url:'https://uren.93-119-6-183.sslip.io/admin'}
+    };
+    const key=new URLSearchParams(location.search).get('app');
+    const selected=apps[key];
+    if(selected){document.title=selected.title+' | Jan Bos';document.getElementById('title').textContent=selected.title;document.getElementById('frame').src=selected.url}else{document.querySelector('.app-view').innerHTML='<main class="error"><div><h1>App niet gevonden</h1><a href="/">Terug naar alle apps</a></div></main>'}
+  </script>
+</body>
+</html>
