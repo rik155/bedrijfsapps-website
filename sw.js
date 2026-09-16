@@ -1,5 +1,5 @@
-const CACHE='jan-bos-apps-v1';
-const SHELL=['/','/style.css','/app.webmanifest','/janbos-logo.jpg','/icon-192.png','/icon-512.png'];
+const CACHE='jan-bos-apps-v2';
+const SHELL=['/','/style.css','/responsive.css','/app.webmanifest','/janbos-logo.jpg','/icon-192.png','/icon-512.png'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).catch(()=>{}));self.skipWaiting();});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
 self.addEventListener('fetch',event=>{
