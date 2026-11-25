@@ -18,7 +18,19 @@ De kantoor-app krijgt één extra tegel **Werkbonnen**. De glaszetter opent een 
 
 Afronden vereist een omschrijving van de uitgevoerde werkzaamheden, minimaal één foto vóór en na, naam, akkoord en handtekening. Ook via de API kan een ondertekende bon niet worden aangepast. Bij gelijktijdige wijzigingen wordt overschrijven geweigerd; de gebruiker houdt zijn eigen invoer in beeld. Kopieer bij een conflict de eigen invoer, herlaad de bon en voeg deze toe aan de nieuwste versie.
 
-## Eenmalige VPS-instelling
+## Uitrollen op de bestaande VPS
+
+De gecontroleerde VPS draait een nieuwere kantoorversie dan de oorspronkelijke GitHub-bron, met extra voorraad- en medewerkersmodules. Gebruik daarom `deploy_werkbonnen.py` met `--release` en de volledige commit-SHA van deze release. Haal de oude GitHub-versie niet over de draaiende kantoor-app heen.
+
+De installer bewaart een snapshot van de draaiende container, inclusief eerdere wijzigingen aan de bestanden. Hierop bouwt hij een nieuwe image. Hij kopieert de werkbon-module en past alleen `app.py` en `kantoor.html` aan. De werkbon-app krijgt een aparte Flask-instantie, sessiecookie en cookiepad via een WSGI-koppeling. De bestaande toegang, instellingen en medewerkerspagina blijven behouden.
+
+Vóór het omschakelen start de installer een tijdelijke testcontainer met dezelfde bestaande gegevensmounts, zonder gepubliceerde poorten en zonder labels voor automatische proxyregistratie. De test controleert beide aanmeldingen, routes en rollen en vergelijkt de medewerkerspagina met het origineel. Daarna vervangt hij de kantoorcontainer met behoud van poorten, omgevingsvariabelen, volumes, netwerk, loginstellingen en herstartbeleid. Als de controle na de omschakeling faalt, zet hij de oorspronkelijke container terug. De oude container blijft als gestopte back-up bewaard.
+
+De installer vraagt twee wachtwoorden via verborgen invoer. Broncode en instellingen van de bestaande kantoor-app verlaten de VPS niet. Een map `~/janbos-werkbonnen-<datum>-<nummer>` bevat de oorspronkelijke bestanden, privéconfiguratie en na een geslaagde uitrol een herstelbestand `HERSTEL.sh`. De map heeft rechten 700 en configuratiebestanden 600. Publiceer deze map niet.
+
+De volledige Docker-uitrol kan niet in de ontwikkelomgeving worden uitgevoerd omdat daar geen Docker-engine beschikbaar is. De VPS-installer controleert de echte configuratie en test de kandidaat vóór de omschakeling. Automatische tests simuleren ook herstel na een mislukte controle en na een onderbroken hernoemactie.
+
+## Installatie bij een nieuwe, schone Flask-opstelling
 
 Deze wijziging is nog niet op de VPS uitgerold. Er staan geen wachtwoorden of voorbeeldklanten in de code.
 
@@ -58,4 +70,4 @@ python -m pytest -q tests/test_werkbonnen.py
 node --check werkbonnen/static/app.js
 ```
 
-De tests controleren de volledige kantoor/glaszetter-workflow, rechten, verplichte velden, CSRF, conflicten, foto’s, ondertekening, vergrendeling, sessie-aanmelding en behoud na een herstart. Een aparte integratietest controleert dat de bestaande statische Flask-route geen database, sessiesleutel, configuratie of uploads kan lekken. De browsercontrole gebruikte uitsluitend lokale testgegevens; die worden niet meegeleverd.
+De tests controleren de volledige kantoor/glaszetter-workflow, rechten, verplichte velden, CSRF, conflicten, foto’s, ondertekening, vergrendeling, sessie-aanmelding en behoud na een herstart. Integratietests controleren de bescherming van bestanden, het behoud van bestaande sessies, de scheiding van cookies en de installatie- en herstelfuncties. De browsercontrole gebruikte uitsluitend lokale testgegevens; die worden niet meegeleverd. Voer de volledige verzameling uit met `python -m pytest -q tests`.

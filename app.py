@@ -4,9 +4,6 @@ from flask import Flask, jsonify, request, send_from_directory
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
-from werkbonnen import init_app
-init_app(app)
-
 BREVO_API_KEY = os.getenv('BREVO_API_KEY', '').strip()
 DEMO_TO_EMAIL = os.getenv('DEMO_TO_EMAIL', 'fokkerrik@gmail.com').strip()
 BREVO_FROM_EMAIL = os.getenv('BREVO_FROM_EMAIL', 'fokkerrik@gmail.com').strip()
@@ -60,6 +57,9 @@ def demo():
 @app.get('/health')
 def health():
     return jsonify(ok=True)
+
+from werkbonnen.portal import attach_to_portal
+attach_to_portal(app)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', '80')))
