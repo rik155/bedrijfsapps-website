@@ -253,6 +253,14 @@ assert call('/werkbonnen/api/orders',cookie=office_cookie)[0]==401
 assert call('/werkbonnen/kantoor-api/activations','POST',{'role':'kantoor'},office_cookie,csrf)[0]==403
 office_csrf=csrf
 
+from werkbonnen.pdf_export import build_work_order_pdf
+sample=dict(id=0,number='CONTROLE',project='Installatiecontrole',status='open',photos=[],signature_url=None,
+            signed_by=None,signed_at=None,created_at='2026-11-25T12:00:00+00:00',planned_date='',name='Test',address='Test',
+            phone='-',email='-',assignee='',assignment='',work_done='',materials='',hours='',customer_notes='')
+assert build_work_order_pdf(sample,os.environ['WERKBON_DATA_DIR']).startswith(b'%PDF-')
+assert call('/werkbonnen/kantoor-api/orders?trash=1',cookie=office_cookie)[0]==200
+assert call('/werkbonnen/kantoor-api/orders/0/pdf',cookie=office_cookie)[0]==404
+assert call('/werkbonnen/kantoor-api/orders/0','DELETE',{'version':0},office_cookie,office_csrf)[0]==404
 database=str(Path(os.environ['WERKBON_DATA_DIR'])/'werkbonnen.sqlite3')
 for role in ('glaszetter',):
     status,body,_=call('/werkbonnen/kantoor-api/activations','POST',{'role':role,'label':'Installatiecontrole'},office_cookie,office_csrf)
@@ -274,6 +282,9 @@ for role in ('glaszetter',):
         assert call('/werkbonnen/api/orders',cookie=cookie,role=role)[0]==200
         if role=='glaszetter':
             assert call('/werkbonnen/api/orders','POST',{},cookie,csrf,role='kantoor')[0]==403
+            assert call('/werkbonnen/api/orders?trash=1',cookie=cookie,role=role)[0]==403
+            assert call('/werkbonnen/api/orders/0/pdf',cookie=cookie,role=role)[0]==403
+            assert call('/werkbonnen/api/orders/0','DELETE',{'version':0},cookie,csrf,role=role)[0]==403
             assert call('/werkbonnen/api/activations','POST',{'role':'kantoor'},cookie,csrf,role='kantoor')[0]==403
         else:
             assert call('/werkbonnen/api/orders','POST',{},cookie,csrf,role=role)[0]==400
@@ -355,7 +366,7 @@ def main():
     # original image. Docker excludes mounted data; those mounts are preserved.
     command(['docker', 'commit', original['Id'], base_tag], capture=True)
     (build / 'Dockerfile').write_text('FROM ' + base_tag + '\nWORKDIR /app\n'
-        'RUN python -m pip install --no-cache-dir Pillow==11.3.0\n'
+        'RUN python -m pip install --no-cache-dir Pillow==11.3.0 reportlab==4.4.9 tzdata==2026.6\n'
         'COPY werkbonnen /app/werkbonnen\nCOPY app.py kantoor.html /app/\n')
     print('2/5 Nieuwe image bouwen vanuit de huidige image; overige apps blijven draaien.', flush=True)
     command(['docker', 'build', '-t', new_image, str(build)])

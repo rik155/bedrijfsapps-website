@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, abort, current_app, g, jsonify, render_template, request, send_file, session
 from PIL import Image, ImageOps, UnidentifiedImageError
+from werkzeug.utils import secure_filename
 from .access import consume_activation, ensure_schema, issue_activation, timestamp
 
 bp = Blueprint('werkbonnen', __name__, url_prefix='/werkbonnen', static_folder='static', template_folder='templates')
@@ -71,6 +72,10 @@ def init_app(app):
             id TEXT PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id),
             category TEXT NOT NULL, filename TEXT NOT NULL, created_at TEXT NOT NULL);
         ''')
+        conn.execute('BEGIN IMMEDIATE')
+        if 'deleted_at' not in {column[1] for column in conn.execute('PRAGMA table_info(orders)')}:
+            conn.execute('ALTER TABLE orders ADD COLUMN deleted_at TEXT')
+        conn.commit()
         ensure_schema(conn)
     app.register_blueprint(bp)
     # The user explicitly chose public access for the office work-order pages.
@@ -181,9 +186,9 @@ def body():
     return data
 
 
-def row(order_id):
+def row(order_id, include_deleted=False):
     result = db().execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone()
-    if not result:
+    if not result or result['deleted_at'] and not include_deleted:
         abort(404, 'Werkbon niet gevonden.')
     return result
 
@@ -191,13 +196,17 @@ def row(order_id):
 def unlocked(record, version):
     if record['status'] == 'completed':
         abort(409, 'Deze werkbon is ondertekend en kan niet meer worden aangepast.')
+    check_version(record, version)
+
+
+def check_version(record, version):
     if version != record['version']:
         abort(409, 'Iemand heeft deze werkbon intussen aangepast. Herlaad de werkbon; je invoer blijft in beeld.')
 
 
 def payload(record):
     data = json.loads(record['data'])
-    data.update({k: record[k] for k in ('id', 'status', 'version', 'created_at', 'updated_at', 'signed_at', 'signed_by')})
+    data.update({k: record[k] for k in ('id', 'status', 'version', 'created_at', 'updated_at', 'signed_at', 'signed_by', 'deleted_at')})
     data['number'] = f"WB-{record['id']:05d}"
     data['photos'] = [{'id': p['id'], 'category': p['category'], 'url': f"{api_base()}/files/{p['id']}"}
                       for p in db().execute("SELECT * FROM photos WHERE order_id=? AND category IN ('before','after') ORDER BY created_at,id", (record['id'],))]
@@ -317,7 +326,11 @@ def revoke_device(device_id):
 @bp.get('/api/orders')
 @checked_request()
 def orders():
-    return jsonify(orders=[payload(r) for r in db().execute('SELECT * FROM orders ORDER BY created_at DESC,id DESC')])
+    trash = request.args.get('trash') == '1'
+    if trash and g.werkbon_mode != 'kantoor':
+        abort(403, 'De prullenbak is alleen beschikbaar op kantoor.')
+    condition = 'IS NOT NULL' if trash else 'IS NULL'
+    return jsonify(orders=[payload(r) for r in db().execute('SELECT * FROM orders WHERE deleted_at ' + condition + ' ORDER BY created_at DESC,id DESC')])
 
 
 @bp.post('/api/orders')
@@ -333,6 +346,44 @@ def create_order():
 @bp.get('/api/orders/<int:order_id>')
 @checked_request()
 def get_order(order_id):
+    return jsonify(payload(row(order_id)))
+
+
+@bp.get('/api/orders/<int:order_id>/pdf')
+@checked_request(office=True)
+def download_pdf(order_id):
+    from .pdf_export import build_work_order_pdf
+    record = row(order_id)
+    document = build_work_order_pdf(payload(record), current_app.config['WERKBON_DATA_DIR'])
+    project = secure_filename(json.loads(record['data'])['project'])[:70] or 'project'
+    return send_file(io.BytesIO(document), mimetype='application/pdf', as_attachment=True,
+                     download_name=f'Werkbon_WB-{order_id:05d}_{project}.pdf', max_age=0)
+
+
+@bp.delete('/api/orders/<int:order_id>')
+@checked_request(office=True)
+def delete_order(order_id):
+    data = body()
+    with db():
+        db().execute('BEGIN IMMEDIATE')
+        record = row(order_id)
+        check_version(record, data.get('version'))
+        stamp = now()
+        db().execute('UPDATE orders SET deleted_at=?,updated_at=?,version=version+1 WHERE id=?', (stamp, stamp, order_id))
+    return jsonify(ok=True)
+
+
+@bp.post('/api/orders/<int:order_id>/restore')
+@checked_request(office=True)
+def restore_order(order_id):
+    data = body()
+    with db():
+        db().execute('BEGIN IMMEDIATE')
+        record = row(order_id, include_deleted=True)
+        if not record['deleted_at']:
+            abort(409, 'Deze werkbon staat niet in de prullenbak.')
+        check_version(record, data.get('version'))
+        db().execute('UPDATE orders SET deleted_at=NULL,updated_at=?,version=version+1 WHERE id=?', (now(), order_id))
     return jsonify(payload(row(order_id)))
 
 
@@ -421,6 +472,7 @@ def file(file_id):
     photo = db().execute('SELECT * FROM photos WHERE id=?', (file_id,)).fetchone()
     if not photo:
         abort(404, 'Bestand niet gevonden.')
+    row(photo['order_id'])
     return send_file(current_app.config['WERKBON_DATA_DIR'] / 'uploads' / photo['filename'], mimetype='image/jpeg')
 
 

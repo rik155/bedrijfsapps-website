@@ -33,9 +33,17 @@ De cookie wordt bij gebruik verlengd, met een looptijd van één jaar. Bij het w
 3. De glaszetter vult werkzaamheden, materialen en uren in en voegt foto’s vóór en na toe. De klant kan opmerkingen invullen.
 4. Tussentijds opslaan bewaart de invoer op de server voor beide ingangen.
 5. De klant controleert de hele bon inclusief foto’s, vult de naam in, tekent met vinger of pen en bevestigt het akkoord.
-6. De bon wordt definitief. Kantoor kan de hele bon bekijken en via de browser afdrukken of als PDF opslaan.
+6. De bon wordt definitief. Kantoor kan de hele bon bekijken en met **PDF downloaden** direct een A4-PDF opslaan, inclusief klantgegevens, opdracht, uitvoering, foto’s vóór/na en handtekening. Bij nog niet opgeslagen wijzigingen vraagt de app die eerst op te slaan.
 
 Afronden vereist een omschrijving van het uitgevoerde werk, minimaal één foto vóór en na, naam, akkoord en handtekening. Ook via de API kan een definitieve bon niet meer worden aangepast. Er worden geen e-mails verstuurd; het e-mailadres is klantinformatie. Er worden geen voorbeeldklanten meegeleverd.
+
+## Werkbonnen verwijderen en herstellen
+
+Op kantoor staat in een geopende werkbon **Werkbon verwijderen**. Na bevestiging gaat de bon naar de **Prullenbak**. Dit werkt ook voor ondertekende bonnen. De bon verdwijnt uit de gewone kantoor- en glaszetterlijsten; ophalen, wijzigen, downloaden en de foto-/handtekeninglinks geven daarna 404. De opgeslagen inhoud en bestanden blijven op de server behouden zodat herstellen mogelijk is.
+
+Open Prullenbak op kantoor en kies **Herstellen**. Bonnummer, inhoud, foto’s en handtekening blijven gelijk. Een herstelde ondertekende bon blijft definitief vergrendeld. Verwijderen en herstellen controleren de actuele versie, zodat een gelijktijdige wijziging niet ongemerkt verloren gaat. Er is geen knop om de prullenbak definitief te legen.
+
+Omdat kantoor volgens de gebruikerskeuze openbaar is, zijn PDF downloaden, verwijderen en herstellen ook beschikbaar aan iedereen die kantoor opent. De glaszetter-API staat deze kantooracties niet toe.
 
 ## Installatie op de bestaande VPS
 
@@ -50,6 +58,8 @@ Vóór de omschakeling maakt de installer alleen een glaszetteractivatielink. Di
 Daarna wordt de kantoorcontainer vervangen met behoud van poorten, bestaande gegevensmounts, omgevingsvariabelen, netwerk, loginstellingen en herstartbeleid. Achtergebleven werkbon-wachtwoordvariabelen worden verwijderd. Bij een mislukte controle na omschakeling wordt de oorspronkelijke container teruggezet. De oude container blijft als gestopte back-up bewaard.
 
 Een map `~/janbos-werkbonnen-DATUM-NUMMER` met rechten 700 bevat de oude bestanden, privéconfiguratie, `activatielinks.json` met rechten 600 en bij succes `HERSTEL.sh`. Publiceer of deel deze map niet. Bestaande privébroncode en instellingen verlaten de VPS niet.
+
+PDF-download gebruikt ReportLab 4.4.9 met ingebedde lettertypen en Nederlandse datum/tijd via tzdata. De installer voegt deze afhankelijkheden toe. De schema-update voegt alleen `deleted_at` toe; bestaande bonnen en apparaatregistraties blijven behouden.
 
 De ontwikkelomgeving heeft geen Docker-engine. De installer test daarom de echte configuratie op de VPS vóór de omschakeling. Automatische tests simuleren herstel na een mislukte controle en een onderbroken hernoemactie. Het script kan een eerdere versie van dezelfde uitbreiding bijwerken. Als het vorige installatieblok nog om een wachtwoord vraagt, onderbreek dat eerst met Ctrl+C.
 

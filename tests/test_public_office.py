@@ -101,7 +101,7 @@ def test_field_links_grant_no_customer_data_or_workflow_beyond_public_office(app
         assert public.methods==private.methods
         assert app.view_functions[public.endpoint] is app.view_functions[private.endpoint]
         compared.add(name)
-    assert compared=={'orders','create_order','get_order','update_order','upload_photo','delete_photo','file','complete'}
+    assert compared=={'orders','create_order','get_order','update_order','upload_photo','delete_photo','file','complete','download_pdf','delete_order','restore_order'}
 
     office=app.test_client()
     state=office.get('/werkbonnen/kantoor-api/session').json
