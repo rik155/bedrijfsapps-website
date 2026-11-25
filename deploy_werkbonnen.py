@@ -250,11 +250,14 @@ assert call('/werkbonnen/kantoor-api/orders','POST',{})[0]==403
 assert call('/werkbonnen/api/session',cookie=office_cookie)[0]==200
 assert json.loads(call('/werkbonnen/api/session',cookie=office_cookie)[1])['role'] is None
 assert call('/werkbonnen/api/orders',cookie=office_cookie)[0]==401
-assert call('/werkbonnen/kantoor-api/activations','POST',{},office_cookie,csrf)[0]==404
+assert call('/werkbonnen/kantoor-api/activations','POST',{'role':'kantoor'},office_cookie,csrf)[0]==403
+office_csrf=csrf
 
 database=str(Path(os.environ['WERKBON_DATA_DIR'])/'werkbonnen.sqlite3')
 for role in ('glaszetter',):
-    invite=issue_activation(database,role,'Installatiecontrole')
+    status,body,_=call('/werkbonnen/kantoor-api/activations','POST',{'role':role,'label':'Installatiecontrole'},office_cookie,office_csrf)
+    assert status==201
+    invite={'token':json.loads(body)['path'].split('#token=',1)[1]}
     device_id=None
     try:
         status,body,cookie=call('/werkbonnen/api/session',role=role)

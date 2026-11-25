@@ -37,7 +37,7 @@ async function refresh(){
   const state=await api('/session');csrf=state.csrf;role=state.role;
   if(!role || mode==='kantoor'&&role!=='kantoor'){activationRequired();return false;}
   $('#new-order').hidden=mode!=='kantoor'||role!=='kantoor';
-  $('#manage-devices').hidden=state.public_office||mode!=='kantoor'||role!=='kantoor';
+  $('#manage-devices').hidden=mode!=='kantoor'||role!=='kantoor';
   const data=await api('/orders');orders=data.orders;renderList();
   $('#sync-info').textContent='Laatst bijgewerkt om '+new Intl.DateTimeFormat('nl-NL',{hour:'2-digit',minute:'2-digit'}).format(new Date())+' · Kantoor en glaszetter gebruiken dezelfde werkbonnen.';
   return true;
@@ -145,12 +145,7 @@ window.addEventListener('offline',()=>notice('Geen internet. Je invoer blijft in
 window.addEventListener('online',()=>{notice('Verbinding hersteld. Je kunt weer opslaan.');if(!current&&!busy&&role)task(refresh);});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!current&&!busy&&role&&!$('#office-dialog').open)task(refresh);});
 setInterval(()=>{if(role&&!current&&!busy&&!$('#office-dialog').open&&document.visibilityState==='visible'&&navigator.onLine)task(refresh);},30000);
-async function deviceList(){
-  const result=await api('/devices');
-  $('#device-list').innerHTML=result.devices.map(d=>`<div class="device-row"><div><strong>${esc(d.label)}</strong><small>${d.role==='kantoor'?'Kantoor':'Glaszetter'}${d.id===result.current_device_id?' · Dit apparaat':''}${d.revoked_at?' · Ingetrokken':''}</small></div>${d.revoked_at?'':`<button class="secondary small" data-revoke="${d.id}">Intrekken</button>`}</div>`).join('')||'<p>Nog geen apparaten.</p>';
-  $$('[data-revoke]').forEach(button=>button.onclick=()=>task(async()=>{if(!confirm('De toegang van dit apparaat intrekken?'))return;await api('/devices/'+button.dataset.revoke+'/revoke',{method:'POST'});notice('Apparaattoegang ingetrokken.');if(button.dataset.revoke===result.current_device_id){$('#devices-dialog').close();role=null;activationRequired();}else await deviceList();},button));
-}
-$('#manage-devices').onclick=()=>task(async()=>{$('#invite-result').hidden=true;$('#device-form').reset();await deviceList();$('#devices-dialog').showModal();},$('#manage-devices'));
+$('#manage-devices').onclick=()=>{$('#invite-result').hidden=true;$('#device-form').reset();$('#devices-dialog').showModal();};
 $('#close-devices').onclick=()=>$('#devices-dialog').close();
 $('#device-form').onsubmit=event=>{event.preventDefault();task(async()=>{const data=Object.fromEntries(new FormData(event.target));const invite=await api('/activations',{method:'POST',body:data});$('#invite-link').value=new URL(invite.path,location.origin).href;$('#invite-result').hidden=false;},$('button',event.target));};
 $('#copy-invite').onclick=()=>task(async()=>{try{await navigator.clipboard.writeText($('#invite-link').value);notice('Activatielink gekopieerd.');}catch{$('#invite-link').focus();$('#invite-link').select();notice('Selecteer en kopieer de link.');}},$('#copy-invite'));

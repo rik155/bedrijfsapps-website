@@ -74,14 +74,15 @@ def init_app(app):
         ensure_schema(conn)
     app.register_blueprint(bp)
     # The user explicitly chose public access for the office work-order pages.
-    # Device enrollment/administration is intentionally not exposed here.
+    # Public office can issue field-device links, as requested by the user.
+    # Device listing/revocation and office-device enrollment remain excluded.
     office_api = Blueprint('werkbonnen_office', __name__, url_prefix='/werkbonnen/kantoor-api')
     prefix = '/werkbonnen/api'
     for rule in list(app.url_map.iter_rules()):
         if not rule.rule.startswith(prefix + '/'):
             continue
         suffix = rule.rule[len(prefix):]
-        if suffix != '/session' and not suffix.startswith(('/orders', '/files/')):
+        if suffix not in ('/session', '/activations') and not suffix.startswith(('/orders', '/files/')):
             continue
         office_api.add_url_rule(suffix, endpoint=rule.endpoint.rsplit('.', 1)[-1],
                                 view_func=app.view_functions[rule.endpoint],
@@ -285,8 +286,11 @@ def activate():
 @checked_request(office=True)
 def create_activation():
     data = body()
+    role = data.get('role', 'glaszetter')
+    if public_office_request() and role != 'glaszetter':
+        abort(403, 'Via kantoor kun je alleen een glaszetter activeren.')
     try:
-        result = issue_activation(current_app.config['WERKBON_DB'], data.get('role'), data.get('label', ''))
+        result = issue_activation(current_app.config['WERKBON_DB'], role, data.get('label', ''))
     except ValueError as error:
         abort(400, str(error))
     return jsonify(path='/werkbonnen/activeren#token=' + result['token'], role=result['role'],
