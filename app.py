@@ -58,5 +58,8 @@ def demo():
 def health():
     return jsonify(ok=True)
 
+from werkbonnen.portal import attach_to_portal
+attach_to_portal(app)
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', '80')))
