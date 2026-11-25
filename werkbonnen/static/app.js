@@ -9,7 +9,7 @@ const date = value => value ? new Intl.DateTimeFormat('nl-NL',{day:'numeric',mon
 const status = order => `<span class="status ${order.status}">${labels[order.status]}</span>`;
 function notice(message, error=false){ clearTimeout(noticeTimer); $('#notice').textContent=message; $('#notice').className='notice'+(error?' error':''); $('#notice').hidden=false; noticeTimer=setTimeout(()=>$('#notice').hidden=true,error?12000:5000); }
 async function api(path, options={}){
-  const headers={'X-CSRF-Token':csrf,...options.headers};
+  const headers={'X-CSRF-Token':csrf,'X-Werkbon-Mode':mode,...options.headers};
   if(options.body && !(options.body instanceof FormData)){ headers['Content-Type']='application/json'; options.body=JSON.stringify(options.body); }
   let response;
   try { response=await fetch('/werkbonnen/api'+path,{...options,headers,cache:'no-store'}); }
@@ -26,11 +26,20 @@ async function task(fn, button){
   try { await fn(); } catch(error){ notice(error.message,true); }
   finally { busy=false; if(button) button.disabled=false; $$('main, dialog, header').forEach(el=>{el.inert=false;el.removeAttribute('aria-busy');}); }
 }
-function show(screen){ for(const id of ['login','dashboard','detail','loading']) $('#'+id).hidden=id!==screen; }
-function loginScreen(){ show('login'); $('#logout').hidden=true; }
+function show(screen){ for(const id of ['activation-required','dashboard','detail','loading']) $('#'+id).hidden=id!==screen; }
+function activationRequired(){
+  $('#field-link').hidden=role!=='glaszetter';
+  $('#device-message').textContent=role==='glaszetter'?'Dit apparaat is geactiveerd voor de glaszetter-app. Gebruik voor kantoor een kantoorapparaat.':'Open een eenmalige activatielink van kantoor op dit apparaat. Daarna opent de app direct, zonder wachtwoord.';
+  show('activation-required');
+}
 async function refresh(){
-  const data=await api('/orders'); orders=data.orders; renderList();
+  const state=await api('/session');csrf=state.csrf;role=state.role;
+  if(!role || mode==='kantoor'&&role!=='kantoor'){activationRequired();return false;}
+  $('#new-order').hidden=mode!=='kantoor'||role!=='kantoor';
+  $('#manage-devices').hidden=mode!=='kantoor'||role!=='kantoor';
+  const data=await api('/orders');orders=data.orders;renderList();
   $('#sync-info').textContent='Laatst bijgewerkt om '+new Intl.DateTimeFormat('nl-NL',{hour:'2-digit',minute:'2-digit'}).format(new Date())+' · Kantoor en glaszetter gebruiken dezelfde werkbonnen.';
+  return true;
 }
 function renderList(){
   for(const state of Object.keys(labels)) $('#count-'+state).textContent=orders.filter(o=>o.status===state).length;
@@ -51,7 +60,7 @@ function field(name,label,rows=3){return `<label>${label}<textarea name="${name}
 function renderDetail(){
   const o=current, readonly=o.status==='completed';
   $('#detail').innerHTML=`<button class="text-button back-button" id="back">Terug naar werkbonnen</button><div class="detail-head"><div><span class="number">${o.number}</span><h1>${esc(o.project)}</h1>${status(o)}</div><div class="actions">${mode==='kantoor'&&role==='kantoor'&&!readonly?'<button class="secondary small" id="edit-office">Opdracht bewerken</button>':''}<button class="secondary small" id="print">Afdrukken / PDF</button></div></div><div class="detail-grid"><div class="stack"><section class="panel"><h2>Klant & opdracht</h2><div class="contact-grid">${contact('Naam klant',esc(o.name))}${contact('Werkadres',esc(o.address))}${contact('Telefoon',`<a href="tel:${esc(o.phone.replace(/[^+\d]/g,''))}">${esc(o.phone)}</a>`)}${contact('E-mail',`<a href="mailto:${esc(o.email)}">${esc(o.email)}</a>`)}</div><div class="assignment"><h3>Opdracht van kantoor</h3><p class="preserve">${esc(o.assignment)}</p></div></section><section class="panel"><h2>Uitvoering op locatie</h2>${readonly?`<h3>Uitgevoerde werkzaamheden</h3><p class="preserve">${esc(o.work_done)}</p><h3>Materialen</h3><p class="preserve">${esc(o.materials||'Geen materialen vermeld')}</p><h3>Gewerkte uren</h3><p>${esc(o.hours||'Niet ingevuld')}</p><h3>Opmerkingen klant</h3><p class="preserve">${esc(o.customer_notes||'Geen opmerkingen')}</p>`:`<form id="work-form" class="work-form">${field('work_done','Uitgevoerde werkzaamheden',4)}<div class="form-grid">${field('materials','Gebruikte materialen',2)}<label>Gewerkte uren<input name="hours" inputmode="decimal" maxlength="300" value="${esc(o.hours)}" placeholder="Bijv. 2,5"></label></div>${field('customer_notes','Opmerkingen van de klant',3)}<div class="save-bar"><span class="save-status" id="save-status">Opgeslagen op ${esc(date(o.updated_at))}</span><button class="primary" type="submit">Tussentijds opslaan</button></div></form>`}</section><section class="panel"><h2>Foto’s van de werkzaamheden</h2>${photoSection('before',readonly)}${photoSection('after',readonly)}${readonly?'':'<p class="tip">Voeg foto’s toe van vóór en na het werk. Foto’s worden verkleind voor het uploaden.</p>'}</section></div><aside class="stack"><section class="panel"><h2>Werkbonoverzicht</h2><dl class="summary-list"><div><dt>Bonnummer</dt><dd>${o.number}</dd></div><div><dt>Plandatum</dt><dd>${esc(date(o.planned_date))}</dd></div><div><dt>Glaszetter</dt><dd>${esc(o.assignee||'Nog niet toegewezen')}</dd></div><div><dt>Aangemaakt</dt><dd>${esc(date(o.created_at))}</dd></div><div><dt>Foto’s vóór / na</dt><dd>${o.photos.filter(p=>p.category==='before').length} / ${o.photos.filter(p=>p.category==='after').length}</dd></div></dl></section><section class="panel ${readonly?'complete-panel':''}"><h2>${readonly?'Klant heeft getekend':'Akkoord van de klant'}</h2>${readonly?`<p>Ondertekend door <strong>${esc(o.signed_by)}</strong><br>${esc(date(o.signed_at))} om ${esc(new Intl.DateTimeFormat('nl-NL',{hour:'2-digit',minute:'2-digit'}).format(new Date(o.signed_at)))}</p><img class="signature-saved" src="${o.signature_url}" alt="Handtekening van de klant"><p class="subtle">De klant heeft de werkbon en de uitgevoerde werkzaamheden gecontroleerd. Deze werkbon is definitief opgeslagen.</p>`:'<p>Laat de klant de ingevulde werkbon controleren en op het scherm ondertekenen.</p><button class="primary full" id="sign">Klant laten tekenen</button><p class="tip">De werkzaamheden en minimaal één foto vóór en na het werk zijn nodig om af te ronden.</p>'}</section></aside></div>`;
-  $('#back').onclick=()=>task(async()=>{if(dirty&&!confirm('Er zijn nog niet opgeslagen wijzigingen. Teruggaan zonder opslaan?'))return; dirty=false; current=null; await refresh(); show('dashboard');});
+  $('#back').onclick=()=>task(async()=>{if(dirty&&!confirm('Er zijn nog niet opgeslagen wijzigingen. Teruggaan zonder opslaan?'))return; dirty=false; current=null; if(await refresh())show('dashboard');});
   $('#print').onclick=()=>{if(dirty){notice('Sla je wijzigingen eerst op voordat je afdrukt.',true);return;} window.print();};
   if($('#edit-office')) $('#edit-office').onclick=()=>task(async()=>{if(dirty)await saveWork();openOffice(current);});
   const form=$('#work-form');
@@ -126,17 +135,22 @@ $('#finish-order').onclick=()=>task(async()=>{
   current=await api('/orders/'+current.id+'/complete',{method:'POST',body:{work_done:current.work_done,materials:current.materials,hours:current.hours,customer_notes:current.customer_notes,version:current.version,signed_by:$('#signed-by').value,consent:true,signature:canvas.toDataURL('image/png')}});
   $('#sign-dialog').close();renderDetail();notice('Werkbon ondertekend en afgerond. Kantoor kan de volledige bon bekijken.');window.scrollTo(0,0);
 },$('#finish-order'));
-$('#login-form').onsubmit=event=>{event.preventDefault();task(async()=>{
-  const result=await api('/login',{method:'POST',body:{role:mode,password:$('#password').value}});csrf=result.csrf;role=result.role;$('#password').value='';await authenticated();
-},$('button',event.target));};
-async function authenticated(){ $('#logout').hidden=false;$('#new-order').hidden=mode!=='kantoor'||role!=='kantoor';if(mode==='kantoor'&&role!=='kantoor'){loginScreen();return;}await refresh();show('dashboard'); }
-$('#logout').onclick=()=>task(async()=>{if(dirty&&!confirm('Er zijn nog niet opgeslagen wijzigingen. Toch afmelden?'))return;await api('/logout',{method:'POST'});dirty=false;role=null;current=null;orders=[];const result=await api('/session');csrf=result.csrf;loginScreen();},$('#logout'));
 $('#new-order').onclick=()=>openOffice();$('#search').oninput=$('#assignee-filter').oninput=renderList;$('#status-filter').onchange=renderList;
 $$('[data-stat]').forEach(el=>el.onclick=()=>{$('#status-filter').value=el.dataset.stat;renderList();});
-$('#refresh').onclick=()=>task(async()=>{await refresh();notice('Werkbonnen bijgewerkt.');},$('#refresh'));
+$('#refresh').onclick=()=>task(async()=>{if(await refresh())notice('Werkbonnen bijgewerkt.');},$('#refresh'));
+$('#check-device').onclick=()=>task(async()=>{if(await refresh())show('dashboard');},$('#check-device'));
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
 window.addEventListener('offline',()=>notice('Geen internet. Je invoer blijft in beeld. Opslaan kan zodra je weer verbinding hebt.',true));
 window.addEventListener('online',()=>{notice('Verbinding hersteld. Je kunt weer opslaan.');if(!current&&!busy&&role)task(refresh);});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!current&&!busy&&role&&!$('#office-dialog').open)task(refresh);});
 setInterval(()=>{if(role&&!current&&!busy&&!$('#office-dialog').open&&document.visibilityState==='visible'&&navigator.onLine)task(refresh);},30000);
-(async()=>{try{const session=await api('/session');csrf=session.csrf;role=session.role;if(role)await authenticated();else loginScreen();}catch(error){loginScreen();notice(error.message,true);}if('serviceWorker'in navigator)navigator.serviceWorker.register('/werkbonnen/sw.js',{scope:'/werkbonnen/'}).catch(()=>{});})();
+async function deviceList(){
+  const result=await api('/devices');
+  $('#device-list').innerHTML=result.devices.map(d=>`<div class="device-row"><div><strong>${esc(d.label)}</strong><small>${d.role==='kantoor'?'Kantoor':'Glaszetter'}${d.id===result.current_device_id?' · Dit apparaat':''}${d.revoked_at?' · Ingetrokken':''}</small></div>${d.revoked_at?'':`<button class="secondary small" data-revoke="${d.id}">Intrekken</button>`}</div>`).join('')||'<p>Nog geen apparaten.</p>';
+  $$('[data-revoke]').forEach(button=>button.onclick=()=>task(async()=>{if(!confirm('De toegang van dit apparaat intrekken?'))return;await api('/devices/'+button.dataset.revoke+'/revoke',{method:'POST'});notice('Apparaattoegang ingetrokken.');if(button.dataset.revoke===result.current_device_id){$('#devices-dialog').close();role=null;activationRequired();}else await deviceList();},button));
+}
+$('#manage-devices').onclick=()=>task(async()=>{$('#invite-result').hidden=true;$('#device-form').reset();await deviceList();$('#devices-dialog').showModal();},$('#manage-devices'));
+$('#close-devices').onclick=()=>$('#devices-dialog').close();
+$('#device-form').onsubmit=event=>{event.preventDefault();task(async()=>{const data=Object.fromEntries(new FormData(event.target));const invite=await api('/activations',{method:'POST',body:data});$('#invite-link').value=new URL(invite.path,location.origin).href;$('#invite-result').hidden=false;},$('button',event.target));};
+$('#copy-invite').onclick=()=>task(async()=>{try{await navigator.clipboard.writeText($('#invite-link').value);notice('Activatielink gekopieerd.');}catch{$('#invite-link').focus();$('#invite-link').select();notice('Selecteer en kopieer de link.');}},$('#copy-invite'));
+(async()=>{try{if(await refresh())show('dashboard');}catch(error){activationRequired();notice(error.message,true);}if('serviceWorker'in navigator)navigator.serviceWorker.register('/werkbonnen/sw.js',{scope:'/werkbonnen/'}).catch(()=>{});})();

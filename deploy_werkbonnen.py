@@ -8,7 +8,6 @@ import argparse
 import ast
 import copy
 from datetime import datetime, timezone
-import getpass
 import hashlib
 import http.client
 import io
@@ -91,6 +90,8 @@ def prepare_config(original, image, additions, *, candidate=False):
     host = copy.deepcopy(original['HostConfig'])
     config['Image'] = image
     environment = dict(item.split('=', 1) for item in (config.get('Env') or []) if '=' in item)
+    environment.pop('WERKBON_KANTOOR_PASSWORD', None)
+    environment.pop('WERKBON_GLASZETTER_PASSWORD', None)
     environment.update(additions)
     config['Env'] = [key + '=' + value for key, value in environment.items()]
     if host.get('AutoRemove') or host.get('ContainerIDFile'):
@@ -142,6 +143,8 @@ def prepare_config(original, image, additions, *, candidate=False):
 
 def patch_app(source):
     marker = '# Jan Bos werkbonnen: aparte sessie en behoud bestaand portaal'
+    if 'from werkbonnen.portal import attach_to_portal' in source and 'attach_to_portal(app)' in source:
+        return source
     if marker in source or re.search(r'^\s*from werkbonnen\b', source, re.M):
         raise RuntimeError('Er staat al een werkbon-uitbreiding in deze app. Er is niets overschreven.')
     tree = ast.parse(source)
@@ -208,12 +211,14 @@ def download_module(release, destination):
 
 
 PROBE = r'''
-import http.client, json, os
+import http.client, json, os, sqlite3
+from pathlib import Path
 from http.cookies import SimpleCookie
+from werkbonnen.access import issue_activation, token_hash
 
-def call(path, method='GET', payload=None, cookie='', csrf=''):
+def call(path, method='GET', payload=None, cookie='', csrf='', role='glaszetter'):
     connection=http.client.HTTPConnection('127.0.0.1',80,timeout=5)
-    headers={'Content-Type':'application/json'}
+    headers={'Content-Type':'application/json','X-Werkbon-Mode':role}
     if cookie: headers['Cookie']=cookie
     if csrf: headers['X-CSRF-Token']=csrf
     connection.request(method,path,body=json.dumps(payload) if payload is not None else None,headers=headers)
@@ -227,23 +232,53 @@ result={}
 for path in ('/','/kantoor.html'):
     result[path]=call(path)[0]
     assert result[path] in (200,301,302,303,307,308,401,403), 'Bestaande portaalroute geeft een fout'
-assert call('/werkbonnen/kantoor')[0]==200
-assert call('/werkbonnen/glaszetter')[0]==200
+for path in ('/werkbonnen/kantoor','/werkbonnen/glaszetter','/werkbonnen/activeren'):
+    status,body,cookie=call(path)
+    assert status==200 and b'type="password"' not in body
 assert call('/werkbonnen/api/orders')[0]==401
+assert call('/werkbonnen/api/orders',role='kantoor')[0]==401
+assert call('/werkbonnen/api/files/not-a-file')[0]==401
 assert call('/werkbonnen/__init__.py')[0]==404
+database=str(Path(os.environ['WERKBON_DATA_DIR'])/'werkbonnen.sqlite3')
 for role in ('kantoor','glaszetter'):
-    status,body,cookie=call('/werkbonnen/api/session')
-    assert status==200 and 'janbos_werkbon_session=' in cookie
-    csrf=json.loads(body)['csrf']
-    status,body,cookie=call('/werkbonnen/api/login','POST',
-        {'role':role,'password':os.environ['WERKBON_'+role.upper()+'_PASSWORD']},cookie,csrf)
-    assert status==200, 'Aanmelden mislukt'
-    csrf=json.loads(body)['csrf']
-    assert call('/werkbonnen/api/orders',cookie=cookie)[0]==200
-    if role=='glaszetter':
-        assert call('/werkbonnen/api/orders','POST',{},cookie,csrf)[0]==403
+    invite=issue_activation(database,role,'Installatiecontrole')
+    device_id=None
+    try:
+        status,body,cookie=call('/werkbonnen/api/session',role=role)
+        assert status==200 and 'janbos_werkbon_session=' in cookie
+        assert json.loads(body)['role'] is None
+        csrf=json.loads(body)['csrf']
+        status,body,cookie=call('/werkbonnen/api/activate','POST',{'token':invite['token']},cookie,csrf,role=role)
+        assert status==200
+        device_id=json.loads(body)['device_id']
+        assert json.loads(body)['role']==role
+        status,body,renewed=call('/werkbonnen/api/session',cookie=cookie,role=role)
+        cookie=renewed or cookie
+        csrf=json.loads(body)['csrf']
+        assert call('/werkbonnen/api/orders',cookie=cookie,role=role)[0]==200
+        if role=='glaszetter':
+            assert call('/werkbonnen/api/orders','POST',{},cookie,csrf,role='kantoor')[0]==403
+            assert call('/werkbonnen/api/activations','POST',{'role':'kantoor'},cookie,csrf,role='kantoor')[0]==403
+        else:
+            assert call('/werkbonnen/api/orders','POST',{},cookie,csrf,role=role)[0]==400
+        assert call('/werkbonnen/api/activate','POST',{'token':invite['token']},cookie,csrf,role=role)[0]==410
+    finally:
+        with sqlite3.connect(database,timeout=15) as db:
+            if device_id: db.execute('DELETE FROM devices WHERE id=?',(device_id,))
+            db.execute('DELETE FROM activations WHERE token_hash=?',(token_hash(invite['token']),))
 print(json.dumps({'ok':True,'portal':result}))
 '''
+
+
+def initial_activations(container):
+    result={}
+    for role,label in (('kantoor','Eerste kantoorapparaat'),('glaszetter','Eerste glaszetterapparaat')):
+        value=command(['docker','exec',container,'python','-m','werkbonnen.devices','invite',role,'--label',label,'--json'],capture=True)
+        invite=json.loads(value)
+        if not invite.get('path','').startswith('/werkbonnen/activeren#token='):
+            raise RuntimeError('Activatielink kon niet worden aangemaakt.')
+        result[role]=invite
+    return result
 
 
 def wait_ready(name):
@@ -254,7 +289,7 @@ def wait_ready(name):
             return json.loads(result.strip())
         except (subprocess.CalledProcessError, json.JSONDecodeError):
             time.sleep(2)
-    raise RuntimeError('De app doorstaat de opstart- en aanmeldcontrole niet.')
+    raise RuntimeError('De app doorstaat de opstart- en werkboncontrole niet.')
 
 
 def delete_test(api, container_id):
@@ -297,19 +332,6 @@ def main():
     index_hash = hashlib.sha256((stage / 'index.html').read_bytes()).hexdigest()
     download_module(args.release, build)
     additions = {'WERKBON_DATA_DIR': '/data/werkbonnen', 'WERKBON_SECURE_COOKIE': '1'}
-    old_env = dict(v.split('=', 1) for v in original['Config'].get('Env', []) if '=' in v)
-    for role in ('KANTOOR', 'GLASZETTER'):
-        key = 'WERKBON_' + role + '_PASSWORD'
-        password = old_env.get(key, '')
-        if len(password) < 12:
-            password = getpass.getpass('Kies wachtwoord voor ' + role.lower() + ' (minimaal 12 tekens): ')
-            if len(password) < 12 or len(password) > 256 or any(c in password for c in '\r\n\0'):
-                raise RuntimeError('Gebruik een wachtwoord van 12 tot 256 tekens zonder regeleinden.')
-            if getpass.getpass('Herhaal het wachtwoord: ') != password:
-                raise RuntimeError('De wachtwoorden verschillen. De bestaande app is niet gewijzigd.')
-        additions[key] = password
-    if additions['WERKBON_KANTOOR_PASSWORD'] == additions['WERKBON_GLASZETTER_PASSWORD']:
-        raise RuntimeError('Kies verschillende wachtwoorden voor kantoor en glaszetter.')
     private_json(stage / 'werkbon-configuratie.json', additions)
     base_tag = args.container.lower() + ':voor-werkbonnen-' + stamp
     new_image = args.container.lower() + ':werkbonnen-' + stamp
@@ -323,7 +345,7 @@ def main():
     command(['docker', 'build', '-t', new_image, str(build)])
     test_name = args.container + '-werkbon-test-' + stamp
     test_id = None
-    print('3/5 Aparte testcontainer controleren, inclusief beide aanmeldingen.', flush=True)
+    print('3/5 Eenmalige activatie testen; ongeactiveerde apparaten krijgen geen klantgegevens.', flush=True)
     try:
         test_id = api.create(test_name, prepare_config(original, new_image, additions, candidate=True))
         api.request('POST', '/containers/' + test_id + '/start')
@@ -332,6 +354,8 @@ def main():
             "import hashlib;print(hashlib.sha256(open('/app/index.html','rb').read()).hexdigest())"], capture=True).strip()
         if actual != index_hash:
             raise RuntimeError('De medewerkerspagina wijkt af; er wordt niet overgeschakeld.')
+        activation_links=initial_activations(test_name)
+        private_json(stage / 'activatielinks.json',activation_links)
     finally:
         if test_id:
             delete_test(api, test_id)
@@ -379,6 +403,10 @@ def main():
     print('Glaszetter: https://apps.93-119-6-183.sslip.io/werkbonnen/glaszetter')
     print('Oorspronkelijke versie bewaard als: ' + backup)
     print('Instellingen en herstelbestand: ' + str(stage))
+    print('Open elke privélink één keer op het bijbehorende apparaat (geldig 48 uur):')
+    for role in ('kantoor','glaszetter'):
+        print(role.capitalize()+': https://apps.93-119-6-183.sslip.io'+activation_links[role]['path'])
+    print('STATUS: WERKBONNEN LIVE - EENMALIGE APPARAATACTIVATIE GEREED')
 
 
 if __name__ == '__main__':

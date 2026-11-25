@@ -11,6 +11,7 @@ from flask import Flask, session
 
 from deploy_werkbonnen import download_module, patch_app, patch_office, prepare_config
 from werkbonnen.portal import attach_to_portal
+from werkbonnen.access import issue_activation
 
 
 def test_separate_cookie_preserves_existing_portal_login(tmp_path):
@@ -33,8 +34,7 @@ def test_separate_cookie_preserves_existing_portal_login(tmp_path):
     def homepage():
         return {'user':session['original_user']}
 
-    config = dict(TESTING=True,WERKBON_DATA_DIR=tmp_path,WERKBON_SECURE_COOKIE=False,
-                  WERKBON_KANTOOR_PASSWORD='office-workorder-test-key')
+    config = dict(TESTING=True,WERKBON_DATA_DIR=tmp_path,WERKBON_SECURE_COOKIE=False)
     orders = attach_to_portal(portal,config)
     assert attach_to_portal(portal,config) is orders
     client = portal.test_client()
@@ -45,9 +45,9 @@ def test_separate_cookie_preserves_existing_portal_login(tmp_path):
     session_result = client.get('/werkbonnen/api/session')
     assert 'janbos_werkbon_session=' in session_result.headers['Set-Cookie']
     assert 'Path=/werkbonnen' in session_result.headers['Set-Cookie']
-    result = client.post('/werkbonnen/api/login',json={'role':'kantoor','password':'office-workorder-test-key'},
-                         headers={'X-CSRF-Token':session_result.json['csrf']})
-    assert result.status_code == 200
+    assert client.get('/werkbonnen/api/orders').status_code == 401
+    invite=issue_activation(orders.config['WERKBON_DB'],'kantoor','Testoffice')
+    assert client.post('/werkbonnen/api/activate',json={'token':invite['token']},headers={'X-CSRF-Token':session_result.json['csrf']}).status_code == 200
     assert client.get('/werkbonnen/api/orders').status_code == 200
     assert client.get('/').json == {'user':'office-user'}
     assert portal.secret_key == 'original-portal-session-test-key'
@@ -70,8 +70,7 @@ if __name__ == '__main__':
     tree = ast.parse(updated)
     assert any(isinstance(n,ast.ImportFrom) and n.module=='existing_inventory' for n in tree.body)
     assert updated.index('attach_to_portal(app)') < updated.index("if __name__ == '__main__':")
-    with pytest.raises(RuntimeError):
-        patch_app(updated)
+    assert patch_app(updated) == updated
     with pytest.raises(RuntimeError):
         patch_app('print("no app")')
     with pytest.raises(RuntimeError):
@@ -216,6 +215,7 @@ def test_deployment_failure_restores_original_container(tmp_path,monkeypatch,fai
     monkeypatch.setattr(deploy,'DockerAPI',Engine)
     monkeypatch.setattr(deploy,'download_module',fake_download)
     monkeypatch.setattr(deploy,'wait_ready',fake_ready)
+    monkeypatch.setattr(deploy,'initial_activations',lambda name:{'kantoor':{'path':'/werkbonnen/activeren#token=fixture'},'glaszetter':{'path':'/werkbonnen/activeren#token=fixture2'}})
     monkeypatch.setattr(deploy.Path,'home',lambda:tmp_path)
     monkeypatch.setattr(deploy.sys,'argv',['deploy_werkbonnen.py','--release','b'*40])
     with pytest.raises((RuntimeError,KeyboardInterrupt)):

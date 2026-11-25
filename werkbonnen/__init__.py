@@ -1,6 +1,5 @@
 import base64
 import functools
-import hashlib
 import io
 import json
 import os
@@ -14,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, abort, current_app, g, jsonify, render_template, request, send_file, session
 from PIL import Image, ImageOps, UnidentifiedImageError
-from werkzeug.security import check_password_hash, generate_password_hash
+from .access import consume_activation, ensure_schema, issue_activation, timestamp
 
 bp = Blueprint('werkbonnen', __name__, url_prefix='/werkbonnen', static_folder='static', template_folder='templates')
 OFFICE_FIELDS = ('project', 'name', 'address', 'phone', 'email', 'assignment', 'planned_date', 'assignee')
@@ -57,12 +56,9 @@ def init_app(app):
         app.secret_key = secret_path.read_text()
     app.config.setdefault('WERKBON_SECURE_COOKIE', os.getenv('WERKBON_SECURE_COOKIE', '1') != '0')
     app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax',
-                      SESSION_COOKIE_SECURE=app.config['WERKBON_SECURE_COOKIE'], PERMANENT_SESSION_LIFETIME=timedelta(days=30))
+                      SESSION_COOKIE_SECURE=app.config['WERKBON_SECURE_COOKIE'], PERMANENT_SESSION_LIFETIME=timedelta(days=365))
     if not app.config.get('MAX_CONTENT_LENGTH'):
         app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
-    for role in ('kantoor', 'glaszetter'):
-        password = app.config.get('WERKBON_' + role.upper() + '_PASSWORD', os.getenv('WERKBON_' + role.upper() + '_PASSWORD', ''))
-        app.config['WERKBON_' + role.upper() + '_HASH'] = generate_password_hash(password) if password else ''
     with sqlite3.connect(app.config['WERKBON_DB']) as conn:
         conn.execute('PRAGMA journal_mode=WAL')
         conn.executescript('''
@@ -74,9 +70,8 @@ def init_app(app):
           CREATE TABLE IF NOT EXISTS photos (
             id TEXT PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id),
             category TEXT NOT NULL, filename TEXT NOT NULL, created_at TEXT NOT NULL);
-          CREATE TABLE IF NOT EXISTS login_attempts (
-            fingerprint TEXT PRIMARY KEY, failures INTEGER NOT NULL, blocked_until REAL NOT NULL);
         ''')
+        ensure_schema(conn)
     app.register_blueprint(bp)
 
     @app.before_request
@@ -110,28 +105,44 @@ def headers(response):
 @bp.errorhandler(403)
 @bp.errorhandler(404)
 @bp.errorhandler(409)
+@bp.errorhandler(410)
 @bp.errorhandler(413)
 @bp.errorhandler(429)
 def error_response(error):
     return jsonify(error=error.description), error.code
 
 
-def protected(office=False):
+def checked_request(office=False):
     def decorate(fn):
         @functools.wraps(fn)
         def inner(*args, **kwargs):
-            role = session.get('werkbon_role')
-            if role not in ('kantoor', 'glaszetter'):
-                abort(401, 'Meld je opnieuw aan.')
-            if office and role != 'kantoor':
-                abort(403, 'Alleen kantoor kan dit aanpassen.')
+            device = active_device()
+            if not device:
+                abort(401, 'Dit apparaat is nog niet geactiveerd. Open een eenmalige activatielink.')
+            mode = request.headers.get('X-Werkbon-Mode', 'glaszetter')
+            if mode not in ('kantoor', 'glaszetter'):
+                abort(400, 'Ongeldige werkbon-omgeving.')
+            g.werkbon_mode = 'kantoor' if device['role'] == 'kantoor' and mode == 'kantoor' else 'glaszetter'
+            if office and g.werkbon_mode != 'kantoor':
+                abort(403, 'Alleen een geactiveerd kantoorapparaat kan dit aanpassen.')
             if request.method not in ('GET', 'HEAD'):
-                token = session.get('werkbon_csrf', '')
-                if not token or not secrets.compare_digest(request.headers.get('X-CSRF-Token', ''), token):
-                    abort(403, 'De sessie is vernieuwd. Vernieuw de pagina en probeer opnieuw.')
+                check_csrf()
             return fn(*args, **kwargs)
         return inner
     return decorate
+
+
+def active_device():
+    identity = session.get('werkbon_device')
+    if not isinstance(identity, str):
+        return None
+    return db().execute('SELECT * FROM devices WHERE id=? AND revoked_at IS NULL', (identity,)).fetchone()
+
+
+def check_csrf():
+    token = session.get('werkbon_csrf', '')
+    if not token or not secrets.compare_digest(request.headers.get('X-CSRF-Token', ''), token):
+        abort(403, 'De sessie is vernieuwd. Vernieuw de pagina en probeer opnieuw.')
 
 
 def body():
@@ -191,6 +202,11 @@ def page():
     return render_template('werkbon.html', mode='kantoor' if request.path.endswith('/kantoor') else 'glaszetter')
 
 
+@bp.get('/activeren')
+def activate_page():
+    return render_template('activate.html')
+
+
 @bp.get('/manifest/<mode>.webmanifest')
 def manifest(mode):
     if mode not in ('kantoor', 'glaszetter'):
@@ -211,59 +227,66 @@ def service_worker():
 
 @bp.get('/api/session')
 def get_session():
+    device = active_device()
     if 'werkbon_csrf' not in session:
         session['werkbon_csrf'] = secrets.token_urlsafe(32)
-    return jsonify(role=session.get('werkbon_role'), csrf=session['werkbon_csrf'])
-
-
-@bp.post('/api/login')
-def login():
-    data = body()
-    csrf = session.get('werkbon_csrf', '')
-    if not csrf or not secrets.compare_digest(request.headers.get('X-CSRF-Token', ''), csrf):
-        abort(403, 'Vernieuw de pagina en probeer opnieuw.')
-    role = data.get('role')
-    if role not in ('kantoor', 'glaszetter'):
-        abort(400, 'Kies een geldige omgeving.')
-    password_hash = current_app.config['WERKBON_' + role.upper() + '_HASH']
-    if not password_hash:
-        return jsonify(error='Deze omgeving moet nog worden ingesteld door de beheerder.'), 503
-    fingerprint = hashlib.sha256((str(request.remote_addr) + ':' + role).encode()).hexdigest()
-    attempts = db().execute('SELECT * FROM login_attempts WHERE fingerprint=?', (fingerprint,)).fetchone()
-    timestamp = datetime.now().timestamp()
-    if attempts and attempts['blocked_until'] > timestamp:
-        abort(429, 'Te vaak geprobeerd. Probeer het over 15 minuten opnieuw.')
-    password = data.get('password', '')
-    if not isinstance(password, str) or len(password) > 1024 or not check_password_hash(password_hash, password):
-        failures = (attempts['failures'] if attempts and attempts['blocked_until'] == 0 else 0) + 1
-        with db():
-            db().execute('INSERT OR REPLACE INTO login_attempts VALUES (?,?,?)',
-                         (fingerprint, failures, timestamp + 900 if failures >= 8 else 0))
-        abort(401, 'Het wachtwoord klopt niet.')
-    with db():
-        db().execute('DELETE FROM login_attempts WHERE fingerprint=?', (fingerprint,))
     session.permanent = True
-    session['werkbon_role'] = role
+    return jsonify(role=device['role'] if device else None, csrf=session['werkbon_csrf'],
+                   device_id=device['id'] if device else None, device_label=device['label'] if device else None)
+
+
+@bp.post('/api/activate')
+def activate():
+    check_csrf()
+    with db():
+        db().execute('BEGIN IMMEDIATE')
+        device = consume_activation(db(), body().get('token'))
+        if not device:
+            abort(410, 'Deze activatielink is verlopen of al gebruikt. Vraag kantoor om een nieuwe link.')
+    session.clear()
+    session.permanent = True
+    session['werkbon_device'] = device['id']
     session['werkbon_csrf'] = secrets.token_urlsafe(32)
-    return jsonify(role=role, csrf=session['werkbon_csrf'])
+    return jsonify(role=device['role'], device_id=device['id'], start_url='/werkbonnen/' + device['role'])
 
 
-@bp.post('/api/logout')
-@protected()
-def logout():
-    session.pop('werkbon_role', None)
-    session.pop('werkbon_csrf', None)
+@bp.post('/api/activations')
+@checked_request(office=True)
+def create_activation():
+    data = body()
+    try:
+        result = issue_activation(current_app.config['WERKBON_DB'], data.get('role'), data.get('label', ''))
+    except ValueError as error:
+        abort(400, str(error))
+    return jsonify(path='/werkbonnen/activeren#token=' + result['token'], role=result['role'],
+                   label=result['label'], expires_at=result['expires_at']), 201
+
+
+@bp.get('/api/devices')
+@checked_request(office=True)
+def list_devices():
+    return jsonify(devices=[dict(d) for d in db().execute('SELECT id,role,label,created_at,revoked_at FROM devices ORDER BY created_at DESC')],
+                   current_device_id=session['werkbon_device'])
+
+
+@bp.post('/api/devices/<device_id>/revoke')
+@checked_request(office=True)
+def revoke_device(device_id):
+    with db():
+        changed = db().execute('UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL', (timestamp(), device_id)).rowcount
+    if not changed:
+        abort(404, 'Geen actief apparaat gevonden.')
     return jsonify(ok=True)
 
 
 @bp.get('/api/orders')
-@protected()
+@checked_request()
 def orders():
     return jsonify(orders=[payload(r) for r in db().execute('SELECT * FROM orders ORDER BY created_at DESC,id DESC')])
 
 
 @bp.post('/api/orders')
-@protected(office=True)
+@checked_request(office=True)
 def create_order():
     values = text_fields(body(), OFFICE_FIELDS)
     values.update({k: '' for k in WORK_FIELDS})
@@ -273,13 +296,13 @@ def create_order():
 
 
 @bp.get('/api/orders/<int:order_id>')
-@protected()
+@checked_request()
 def get_order(order_id):
     return jsonify(payload(row(order_id)))
 
 
 @bp.patch('/api/orders/<int:order_id>')
-@protected()
+@checked_request()
 def update_order(order_id):
     data = body()
     with db():
@@ -287,7 +310,7 @@ def update_order(order_id):
         record = row(order_id)
         unlocked(record, data.get('version'))
         fields = OFFICE_FIELDS if data.get('section') == 'office' else WORK_FIELDS
-        if fields == OFFICE_FIELDS and session['werkbon_role'] != 'kantoor':
+        if fields == OFFICE_FIELDS and g.werkbon_mode != 'kantoor':
             abort(403, 'Alleen kantoor kan klantgegevens en opdracht wijzigen.')
         values = json.loads(record['data'])
         values.update(text_fields(data, fields))
@@ -319,7 +342,7 @@ def image_bytes(stream, signature=False):
 
 
 @bp.post('/api/orders/<int:order_id>/photos')
-@protected()
+@checked_request()
 def upload_photo(order_id):
     category = request.form.get('category')
     photo = request.files.get('file')
@@ -342,7 +365,7 @@ def upload_photo(order_id):
 
 
 @bp.delete('/api/orders/<int:order_id>/photos/<photo_id>')
-@protected()
+@checked_request()
 def delete_photo(order_id, photo_id):
     data = body()
     with db():
@@ -358,7 +381,7 @@ def delete_photo(order_id, photo_id):
 
 
 @bp.get('/api/files/<file_id>')
-@protected()
+@checked_request()
 def file(file_id):
     photo = db().execute('SELECT * FROM photos WHERE id=?', (file_id,)).fetchone()
     if not photo:
@@ -367,7 +390,7 @@ def file(file_id):
 
 
 @bp.post('/api/orders/<int:order_id>/complete')
-@protected()
+@checked_request()
 def complete(order_id):
     data = body()
     signed_by = data.get('signed_by', '')

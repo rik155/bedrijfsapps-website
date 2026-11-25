@@ -7,6 +7,7 @@ import pytest
 
 from flask import Flask
 from werkbonnen import init_app
+from werkbonnen.access import issue_activation
 
 
 def create_app(config):
@@ -24,16 +25,16 @@ WORK = dict(work_done='Ruit vervangen en netjes afgewerkt.', materials='HR++ rui
 @pytest.fixture
 def app(tmp_path):
     return create_app(dict(TESTING=True, WERKBON_DATA_DIR=tmp_path,
-                           WERKBON_SECURE_COOKIE=False,
-                           WERKBON_KANTOOR_PASSWORD='test-kantoor-1234',
-                           WERKBON_GLASZETTER_PASSWORD='test-glaszetter-1234'))
+                           WERKBON_SECURE_COOKIE=False))
 
 
-def login(client, role):
+def open_workspace(client, role):
+    invite = issue_activation(client.application.config['WERKBON_DB'], role, 'Testapparaat')
     csrf = client.get('/werkbonnen/api/session').json['csrf']
-    result = client.post('/werkbonnen/api/login', json={'role': role, 'password': 'test-'+role+'-1234'}, headers={'X-CSRF-Token': csrf})
-    assert result.status_code == 200
-    return {'X-CSRF-Token': result.json['csrf']}
+    result = client.post('/werkbonnen/api/activate', json={'token':invite['token']}, headers={'X-CSRF-Token':csrf})
+    assert result.status_code == 200 and result.json['role'] == role
+    state = client.get('/werkbonnen/api/session').json
+    return {'X-CSRF-Token':state['csrf'], 'X-Werkbon-Mode':role}
 
 
 def image_bytes(signature=False):
@@ -57,7 +58,7 @@ def signed(order):
 
 def test_full_workflow_and_immutable_signature(app):
     office, field = app.test_client(), app.test_client()
-    oh, fh = login(office, 'kantoor'), login(field, 'glaszetter')
+    oh, fh = open_workspace(office, 'kantoor'), open_workspace(field, 'glaszetter')
     created = office.post('/werkbonnen/api/orders', json=OFFICE, headers=oh)
     assert created.status_code == 201
     order = created.json
@@ -87,10 +88,10 @@ def test_full_workflow_and_immutable_signature(app):
 def test_access_controls_and_validation(app):
     client = app.test_client()
     assert client.get('/werkbonnen/api/orders').status_code == 401
-    fh = login(client, 'glaszetter')
+    fh = open_workspace(client, 'glaszetter')
     assert client.post('/werkbonnen/api/orders', json=OFFICE, headers=fh).status_code == 403
     office = app.test_client()
-    oh = login(office, 'kantoor')
+    oh = open_workspace(office, 'kantoor')
     assert office.post('/werkbonnen/api/orders', json=OFFICE).status_code == 403
     assert office.post('/werkbonnen/api/orders', json=dict(OFFICE, email='invalid'), headers=oh).status_code == 400
     assert office.post('/werkbonnen/api/orders', json=dict(OFFICE, planned_date='2026-02-31'), headers=oh).status_code == 400
@@ -104,7 +105,7 @@ def test_access_controls_and_validation(app):
 
 def test_conflicts_do_not_overwrite_data(app):
     office, field = app.test_client(), app.test_client()
-    oh, fh = login(office, 'kantoor'), login(field, 'glaszetter')
+    oh, fh = open_workspace(office, 'kantoor'), open_workspace(field, 'glaszetter')
     order = office.post('/werkbonnen/api/orders', json=OFFICE, headers=oh).json
     updated = office.patch(f"/werkbonnen/api/orders/{order['id']}", json=dict(OFFICE, assignment='Nieuwe opdracht', section='office', version=order['version']), headers=oh)
     assert updated.status_code == 200
@@ -116,7 +117,7 @@ def test_conflicts_do_not_overwrite_data(app):
 
 def test_delete_photo_and_blank_signature(app):
     client = app.test_client()
-    headers = login(client, 'kantoor')
+    headers = open_workspace(client, 'kantoor')
     order = client.post('/werkbonnen/api/orders', json=OFFICE, headers=headers).json
     order = photo(client, headers, order, 'before').json
     p = order['photos'][0]
@@ -132,41 +133,50 @@ def test_delete_photo_and_blank_signature(app):
 
 def test_data_persists_after_restart(app):
     client = app.test_client()
-    headers = login(client, 'kantoor')
+    headers = open_workspace(client, 'kantoor')
     order = client.post('/werkbonnen/api/orders', json=OFFICE, headers=headers).json
     order = photo(client, headers, order, 'before').json
-    restarted = create_app(dict(TESTING=True,WERKBON_DATA_DIR=app.config['WERKBON_DATA_DIR'],WERKBON_SECURE_COOKIE=False,
-                                WERKBON_KANTOOR_PASSWORD='test-kantoor-1234',WERKBON_GLASZETTER_PASSWORD='test-glaszetter-1234'))
-    fresh = restarted.test_client();login(fresh,'kantoor')
+    restarted = create_app(dict(TESTING=True,WERKBON_DATA_DIR=app.config['WERKBON_DATA_DIR'],WERKBON_SECURE_COOKIE=False))
+    fresh = restarted.test_client();open_workspace(fresh,'kantoor')
     result = fresh.get(f"/werkbonnen/api/orders/{order['id']}")
     assert result.json['photos'] == order['photos']
     assert fresh.get(result.json['photos'][0]['url']).status_code == 200
 
 
-def test_login_throttle_and_manifest(app):
+def test_both_workspaces_require_activation_but_no_password_form(app):
     client = app.test_client()
-    csrf = client.get('/werkbonnen/api/session').json['csrf']
-    for _ in range(8):
-        assert client.post('/werkbonnen/api/login', json={'role':'kantoor','password':'bad'},headers={'X-CSRF-Token':csrf}).status_code == 401
-    assert client.post('/werkbonnen/api/login', json={'role':'kantoor','password':'bad'},headers={'X-CSRF-Token':csrf}).status_code == 429
+    for role in ('kantoor', 'glaszetter'):
+        page = client.get('/werkbonnen/' + role)
+        assert page.status_code == 200 and b'type="password"' not in page.data
+        headers = open_workspace(client, role)
+        assert client.get('/werkbonnen/api/orders', headers=headers).status_code == 200
+    assert client.post('/werkbonnen/api/login', json={}).status_code == 404
+    assert client.get('/werkbonnen/api/session', headers={'X-Werkbon-Mode':'invalid'}).json['role'] == 'glaszetter'
     manifest = client.get('/werkbonnen/manifest/glaszetter.webmanifest').json
-    assert manifest['start_url'] == '/werkbonnen/glaszetter' and manifest['display']=='standalone'
+    assert manifest['start_url'] == '/werkbonnen/glaszetter' and manifest['display'] == 'standalone'
     assert client.get('/werkbonnen/sw.js').status_code == 200
+
+
+def test_two_workspaces_in_same_browser_do_not_change_each_other(app):
+    client = app.test_client()
+    office = open_workspace(client, 'kantoor')
+    field = dict(office, **{'X-Werkbon-Mode':'glaszetter'})
+    assert client.post('/werkbonnen/api/orders', json=OFFICE, headers=office).status_code == 201
+    assert client.post('/werkbonnen/api/orders', json=OFFICE, headers=field).status_code == 403
 
 
 def test_existing_static_portal_cannot_expose_database_or_uploads(tmp_path):
     from flask import Flask
     from werkbonnen import init_app
     portal = Flask(__name__,static_folder=str(tmp_path),static_url_path='')
-    portal.config.update(TESTING=True,WERKBON_DATA_DIR=tmp_path/'data',WERKBON_SECURE_COOKIE=False,
-                          WERKBON_KANTOOR_PASSWORD='test-kantoor-1234')
+    portal.config.update(TESTING=True,WERKBON_DATA_DIR=tmp_path/'data',WERKBON_SECURE_COOKIE=False)
     init_app(portal)
     (tmp_path/'.env.werkbonnen').write_text('private configuration')
     client = portal.test_client()
     assert client.get('/data/werkbonnen.sqlite3').status_code == 404
     assert client.get('/data/.session-secret').status_code == 404
     assert client.get('/.env.werkbonnen').status_code == 404
-    headers = login(client,'kantoor')
+    headers = open_workspace(client,'kantoor')
     order = client.post('/werkbonnen/api/orders',json=OFFICE,headers=headers).json
     order = photo(client,headers,order,'before').json
     assert client.get('/data/uploads/'+order['photos'][0]['id']+'.jpg').status_code == 404
