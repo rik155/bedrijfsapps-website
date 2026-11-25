@@ -2,6 +2,7 @@
 const $ = (s, root=document) => root.querySelector(s);
 const $$ = (s, root=document) => [...root.querySelectorAll(s)];
 const mode = document.body.dataset.mode;
+const apiPrefix=mode==='kantoor'?'/werkbonnen/kantoor-api':'/werkbonnen/api';
 const labels = {open:'Open', in_progress:'In uitvoering', completed:'Afgerond'};
 let csrf='', role=null, orders=[], current=null, dirty=false, officeRecord=null, busy=false, signatureDrawn=false, noticeTimer;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -12,7 +13,7 @@ async function api(path, options={}){
   const headers={'X-CSRF-Token':csrf,'X-Werkbon-Mode':mode,...options.headers};
   if(options.body && !(options.body instanceof FormData)){ headers['Content-Type']='application/json'; options.body=JSON.stringify(options.body); }
   let response;
-  try { response=await fetch('/werkbonnen/api'+path,{...options,headers,cache:'no-store'}); }
+  try { response=await fetch(apiPrefix+path,{...options,headers,cache:'no-store'}); }
   catch { throw new Error('Geen verbinding. Je invoer blijft in beeld. Maak verbinding en probeer opnieuw.'); }
   const data=await response.json().catch(()=>({error: response.status===413?'De foto is te groot. Kies een kleinere afbeelding.':'De server gaf geen geldig antwoord.'}));
   if(!response.ok) throw new Error(data.error || 'Opslaan is niet gelukt. Probeer opnieuw.');
@@ -36,7 +37,7 @@ async function refresh(){
   const state=await api('/session');csrf=state.csrf;role=state.role;
   if(!role || mode==='kantoor'&&role!=='kantoor'){activationRequired();return false;}
   $('#new-order').hidden=mode!=='kantoor'||role!=='kantoor';
-  $('#manage-devices').hidden=mode!=='kantoor'||role!=='kantoor';
+  $('#manage-devices').hidden=state.public_office||mode!=='kantoor'||role!=='kantoor';
   const data=await api('/orders');orders=data.orders;renderList();
   $('#sync-info').textContent='Laatst bijgewerkt om '+new Intl.DateTimeFormat('nl-NL',{hour:'2-digit',minute:'2-digit'}).format(new Date())+' · Kantoor en glaszetter gebruiken dezelfde werkbonnen.';
   return true;
@@ -153,4 +154,4 @@ $('#manage-devices').onclick=()=>task(async()=>{$('#invite-result').hidden=true;
 $('#close-devices').onclick=()=>$('#devices-dialog').close();
 $('#device-form').onsubmit=event=>{event.preventDefault();task(async()=>{const data=Object.fromEntries(new FormData(event.target));const invite=await api('/activations',{method:'POST',body:data});$('#invite-link').value=new URL(invite.path,location.origin).href;$('#invite-result').hidden=false;},$('button',event.target));};
 $('#copy-invite').onclick=()=>task(async()=>{try{await navigator.clipboard.writeText($('#invite-link').value);notice('Activatielink gekopieerd.');}catch{$('#invite-link').focus();$('#invite-link').select();notice('Selecteer en kopieer de link.');}},$('#copy-invite'));
-(async()=>{try{if(await refresh())show('dashboard');}catch(error){activationRequired();notice(error.message,true);}if('serviceWorker'in navigator)navigator.serviceWorker.register('/werkbonnen/sw.js',{scope:'/werkbonnen/'}).catch(()=>{});})();
+(async()=>{try{if(await refresh())show('dashboard');}catch(error){if(mode==='kantoor'){show('dashboard');$('#order-list').textContent='Werkbonnen konden niet worden geladen. Kies Vernieuwen zodra de verbinding is hersteld.';}else activationRequired();notice(error.message,true);}if('serviceWorker'in navigator)navigator.serviceWorker.register('/werkbonnen/sw.js',{scope:'/werkbonnen/'}).catch(()=>{});})();

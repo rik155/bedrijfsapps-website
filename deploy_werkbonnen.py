@@ -239,8 +239,21 @@ assert call('/werkbonnen/api/orders')[0]==401
 assert call('/werkbonnen/api/orders',role='kantoor')[0]==401
 assert call('/werkbonnen/api/files/not-a-file')[0]==401
 assert call('/werkbonnen/__init__.py')[0]==404
+status,body,office_cookie=call('/werkbonnen/kantoor-api/session')
+assert status==200 and json.loads(body)['role']=='kantoor'
+assert json.loads(body)['public_office'] is True
+assert json.loads(body)['device_id'] is None
+csrf=json.loads(body)['csrf']
+assert call('/werkbonnen/kantoor-api/orders')[0]==200
+assert call('/werkbonnen/kantoor-api/orders','POST',{},office_cookie,csrf)[0]==400
+assert call('/werkbonnen/kantoor-api/orders','POST',{})[0]==403
+assert call('/werkbonnen/api/session',cookie=office_cookie)[0]==200
+assert json.loads(call('/werkbonnen/api/session',cookie=office_cookie)[1])['role'] is None
+assert call('/werkbonnen/api/orders',cookie=office_cookie)[0]==401
+assert call('/werkbonnen/kantoor-api/activations','POST',{},office_cookie,csrf)[0]==404
+
 database=str(Path(os.environ['WERKBON_DATA_DIR'])/'werkbonnen.sqlite3')
-for role in ('kantoor','glaszetter'):
+for role in ('glaszetter',):
     invite=issue_activation(database,role,'Installatiecontrole')
     device_id=None
     try:
@@ -272,7 +285,7 @@ print(json.dumps({'ok':True,'portal':result}))
 
 def initial_activations(container):
     result={}
-    for role,label in (('kantoor','Eerste kantoorapparaat'),('glaszetter','Eerste glaszetterapparaat')):
+    for role,label in (('glaszetter','Eerste glaszetterapparaat'),):
         value=command(['docker','exec',container,'python','-m','werkbonnen.devices','invite',role,'--label',label,'--json'],capture=True)
         invite=json.loads(value)
         if not invite.get('path','').startswith('/werkbonnen/activeren#token='):
@@ -345,7 +358,7 @@ def main():
     command(['docker', 'build', '-t', new_image, str(build)])
     test_name = args.container + '-werkbon-test-' + stamp
     test_id = None
-    print('3/5 Eenmalige activatie testen; ongeactiveerde apparaten krijgen geen klantgegevens.', flush=True)
+    print('3/5 Kantoor zonder activatie en aparte glaszetteractivatie controleren.', flush=True)
     try:
         test_id = api.create(test_name, prepare_config(original, new_image, additions, candidate=True))
         api.request('POST', '/containers/' + test_id + '/start')
@@ -403,10 +416,11 @@ def main():
     print('Glaszetter: https://apps.93-119-6-183.sslip.io/werkbonnen/glaszetter')
     print('Oorspronkelijke versie bewaard als: ' + backup)
     print('Instellingen en herstelbestand: ' + str(stage))
-    print('Open elke privélink één keer op het bijbehorende apparaat (geldig 48 uur):')
-    for role in ('kantoor','glaszetter'):
+    print('Kantoor opent direct via de bestaande kantoor-app; er is geen kantooractivatie nodig.')
+    print('Open deze privélink één keer op het glaszetterapparaat (geldig 48 uur):')
+    for role in ('glaszetter',):
         print(role.capitalize()+': https://apps.93-119-6-183.sslip.io'+activation_links[role]['path'])
-    print('STATUS: WERKBONNEN LIVE - EENMALIGE APPARAATACTIVATIE GEREED')
+    print('STATUS: WERKBONNEN LIVE - KANTOOR DIRECT OPEN - GLASZETTER EENMALIG ACTIVEREN')
 
 
 if __name__ == '__main__':

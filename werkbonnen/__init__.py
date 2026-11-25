@@ -73,6 +73,23 @@ def init_app(app):
         ''')
         ensure_schema(conn)
     app.register_blueprint(bp)
+    # The user explicitly chose public access for the office work-order pages.
+    # Device enrollment/administration is intentionally not exposed here.
+    office_api = Blueprint('werkbonnen_office', __name__, url_prefix='/werkbonnen/kantoor-api')
+    prefix = '/werkbonnen/api'
+    for rule in list(app.url_map.iter_rules()):
+        if not rule.rule.startswith(prefix + '/'):
+            continue
+        suffix = rule.rule[len(prefix):]
+        if suffix != '/session' and not suffix.startswith(('/orders', '/files/')):
+            continue
+        office_api.add_url_rule(suffix, endpoint=rule.endpoint.rsplit('.', 1)[-1],
+                                view_func=app.view_functions[rule.endpoint],
+                                methods=sorted(rule.methods - {'HEAD', 'OPTIONS'}))
+    office_api.after_request(headers)
+    for code in (400,401,403,404,409,410,413,429):
+        office_api.register_error_handler(code, error_response)
+    app.register_blueprint(office_api)
 
     @app.before_request
     def protect_werkbon_storage():
@@ -116,13 +133,16 @@ def checked_request(office=False):
     def decorate(fn):
         @functools.wraps(fn)
         def inner(*args, **kwargs):
-            device = active_device()
-            if not device:
-                abort(401, 'Dit apparaat is nog niet geactiveerd. Open een eenmalige activatielink.')
-            mode = request.headers.get('X-Werkbon-Mode', 'glaszetter')
-            if mode not in ('kantoor', 'glaszetter'):
-                abort(400, 'Ongeldige werkbon-omgeving.')
-            g.werkbon_mode = 'kantoor' if device['role'] == 'kantoor' and mode == 'kantoor' else 'glaszetter'
+            if public_office_request():
+                g.werkbon_mode = 'kantoor'
+            else:
+                device = active_device()
+                if not device:
+                    abort(401, 'Dit apparaat is nog niet geactiveerd. Open een eenmalige activatielink.')
+                mode = request.headers.get('X-Werkbon-Mode', 'glaszetter')
+                if mode not in ('kantoor', 'glaszetter'):
+                    abort(400, 'Ongeldige werkbon-omgeving.')
+                g.werkbon_mode = 'kantoor' if device['role'] == 'kantoor' and mode == 'kantoor' else 'glaszetter'
             if office and g.werkbon_mode != 'kantoor':
                 abort(403, 'Alleen een geactiveerd kantoorapparaat kan dit aanpassen.')
             if request.method not in ('GET', 'HEAD'):
@@ -130,6 +150,14 @@ def checked_request(office=False):
             return fn(*args, **kwargs)
         return inner
     return decorate
+
+
+def public_office_request():
+    return request.blueprint == 'werkbonnen_office'
+
+
+def api_base():
+    return '/werkbonnen/kantoor-api' if public_office_request() else '/werkbonnen/api'
 
 
 def active_device():
@@ -170,9 +198,9 @@ def payload(record):
     data = json.loads(record['data'])
     data.update({k: record[k] for k in ('id', 'status', 'version', 'created_at', 'updated_at', 'signed_at', 'signed_by')})
     data['number'] = f"WB-{record['id']:05d}"
-    data['photos'] = [{'id': p['id'], 'category': p['category'], 'url': f"/werkbonnen/api/files/{p['id']}"}
+    data['photos'] = [{'id': p['id'], 'category': p['category'], 'url': f"{api_base()}/files/{p['id']}"}
                       for p in db().execute("SELECT * FROM photos WHERE order_id=? AND category IN ('before','after') ORDER BY created_at,id", (record['id'],))]
-    data['signature_url'] = f"/werkbonnen/api/files/{record['signature_id']}" if record['signature_id'] else None
+    data['signature_url'] = f"{api_base()}/files/{record['signature_id']}" if record['signature_id'] else None
     return data
 
 
@@ -231,8 +259,11 @@ def get_session():
     if 'werkbon_csrf' not in session:
         session['werkbon_csrf'] = secrets.token_urlsafe(32)
     session.permanent = True
-    return jsonify(role=device['role'] if device else None, csrf=session['werkbon_csrf'],
-                   device_id=device['id'] if device else None, device_label=device['label'] if device else None)
+    public = public_office_request()
+    return jsonify(role='kantoor' if public else device['role'] if device else None,
+                   public_office=public, csrf=session['werkbon_csrf'],
+                   device_id=None if public else device['id'] if device else None,
+                   device_label=None if public else device['label'] if device else None)
 
 
 @bp.post('/api/activate')
