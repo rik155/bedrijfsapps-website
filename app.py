@@ -4,6 +4,9 @@ from flask import Flask, jsonify, request, send_from_directory
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
+from werkbonnen import init_app
+init_app(app)
+
 BREVO_API_KEY = os.getenv('BREVO_API_KEY', '').strip()
 DEMO_TO_EMAIL = os.getenv('DEMO_TO_EMAIL', 'fokkerrik@gmail.com').strip()
 BREVO_FROM_EMAIL = os.getenv('BREVO_FROM_EMAIL', 'fokkerrik@gmail.com').strip()
